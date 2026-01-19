@@ -1,3 +1,9 @@
+# Test files
+Autotest.txt
+
+# Debug logs
+*.log
+
 # Python
 __pycache__/
 *.py[cod]
@@ -5,6 +11,7 @@ __pycache__/
 .Python
 env/
 venv/
+*.egg-info/
 
 # IDE
 .idea/
@@ -15,5 +22,3 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
-
-# Don't ignore the flag file pattern documentation, but the actual flag file is in home dir

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Claude Allow-All Toggle - Installer
+Claude Permissions Toggle - Installer
 
-Installs the auto-yes hook and toggle for Claude Code.
+Installs the permissions hook and toggle for Claude Code.
 
 Usage:
-    python install.py           # Install
+    python install.py              # Install
     python install.py --uninstall  # Uninstall
 """
 
@@ -15,6 +15,12 @@ import json
 import shutil
 import argparse
 
+
+def get_python_path():
+    """Get the full path to the Python executable."""
+    return sys.executable
+
+
 def get_paths():
     """Get all relevant paths."""
     home = os.path.expanduser("~")
@@ -23,31 +29,41 @@ def get_paths():
     return {
         "home": home,
         "script_dir": script_dir,
-        "hook_src": os.path.join(script_dir, "auto-yes-hook.cmd"),
-        "hook_dst": os.path.join(home, "auto-yes-hook.cmd"),
+        "python_exe": get_python_path(),
+        # Hook files
+        "hook_py_src": os.path.join(script_dir, "claude-permissions-hook.py"),
+        "hook_py_dst": os.path.join(home, "claude-permissions-hook.py"),
+        # Other files
         "toggle_file": os.path.join(script_dir, "AutoYesToggle.pyw"),
         "settings_file": os.path.join(home, ".claude", "settings.json"),
-        "flag_file": os.path.join(home, ".claude-auto-yes"),
+        "config_file": os.path.join(home, ".claude-permissions.json"),
+        # Old files (for cleanup)
+        "old_hook_cmd": os.path.join(home, "auto-yes-hook.cmd"),
+        "old_flag": os.path.join(home, ".claude-auto-yes"),
+        "old_permissions_cmd": os.path.join(home, "claude-permissions-hook.cmd"),
     }
+
 
 def install():
     """Install the hook and toggle."""
     paths = get_paths()
 
-    print("Installing Claude Allow-All Toggle...")
+    print("=" * 55)
+    print("Claude Permissions Toggle - Installer")
+    print("=" * 55)
     print()
 
-    # Step 1: Copy hook script
-    print(f"1. Copying hook script to {paths['hook_dst']}")
-    if os.path.exists(paths["hook_src"]):
-        shutil.copy(paths["hook_src"], paths["hook_dst"])
+    # Step 1: Copy Python hook
+    print(f"1. Copying hook to: {paths['hook_py_dst']}")
+    if os.path.exists(paths["hook_py_src"]):
+        shutil.copy(paths["hook_py_src"], paths["hook_py_dst"])
         print("   Done!")
     else:
-        print(f"   ERROR: Source file not found: {paths['hook_src']}")
+        print(f"   ERROR: Source file not found: {paths['hook_py_src']}")
         return False
 
     # Step 2: Configure Claude Code settings
-    print(f"2. Configuring Claude Code settings at {paths['settings_file']}")
+    print(f"\n2. Configuring Claude Code settings")
 
     # Load existing settings or create new
     settings = {}
@@ -55,17 +71,19 @@ def install():
         try:
             with open(paths["settings_file"], 'r') as f:
                 settings = json.load(f)
-            print("   Loaded existing settings")
+            print("   Loaded existing settings.json")
         except json.JSONDecodeError:
             print("   Warning: Could not parse existing settings, creating new")
             settings = {}
 
-    # Add hooks configuration
+    # Build hook command with full Python path
+    hook_command = f"{paths['python_exe']} {paths['hook_py_dst']}"
+
     hook_entry = {
         "matcher": "*",
         "hooks": [{
             "type": "command",
-            "command": paths["hook_dst"]
+            "command": hook_command
         }]
     }
 
@@ -74,56 +92,79 @@ def install():
     if "PreToolUse" not in settings["hooks"]:
         settings["hooks"]["PreToolUse"] = []
 
-    # Check if hook already exists
-    hook_exists = any(
-        h.get("hooks", [{}])[0].get("command", "").endswith("auto-yes-hook.cmd")
-        for h in settings["hooks"]["PreToolUse"]
-    )
-
-    if hook_exists:
-        print("   Hook already configured, skipping")
-    else:
-        settings["hooks"]["PreToolUse"].append(hook_entry)
-        print("   Added hook configuration")
+    # Remove old hooks if present
+    settings["hooks"]["PreToolUse"] = [
+        h for h in settings["hooks"]["PreToolUse"]
+        if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
+            "auto-yes-hook.cmd",
+            "claude-permissions-hook.cmd",
+            "claude-permissions-hook.py"
+        ])
+    ]
+    settings["hooks"]["PreToolUse"].append(hook_entry)
 
     # Write settings
     os.makedirs(os.path.dirname(paths["settings_file"]), exist_ok=True)
     with open(paths["settings_file"], 'w') as f:
         json.dump(settings, f, indent=2)
-    print("   Saved settings")
+    print("   Added hook to settings.json")
+    print(f"   Using Python: {paths['python_exe']}")
+
+    # Step 3: Clean up old files
+    old_files_removed = []
+    for name, path in [
+        ("old cmd hook", paths["old_hook_cmd"]),
+        ("old flag file", paths["old_flag"]),
+        ("old permissions cmd", paths["old_permissions_cmd"]),
+    ]:
+        if os.path.exists(path):
+            os.remove(path)
+            old_files_removed.append(name)
+
+    if old_files_removed:
+        print(f"\n3. Cleaned up old files: {', '.join(old_files_removed)}")
 
     print()
-    print("=" * 50)
+    print("=" * 55)
     print("Installation complete!")
+    print("=" * 55)
     print()
     print("To use:")
-    print(f"  1. Double-click: {paths['toggle_file']}")
-    print("  2. Click the button to toggle ON/OFF")
-    print("  3. When ON (green), all Claude Code tools auto-approve")
-    print("=" * 50)
+    print(f"  1. Run: python {paths['toggle_file']}")
+    print("     Or double-click AutoYesToggle.pyw")
+    print()
+    print("  2. Click a template button:")
+    print("     - OFF:    Claude asks for everything")
+    print("     - ALL*:   Allow all, block destructive (recommended)")
+    print("     - ALL:    Allow everything (dangerous!)")
+    print("     - CUSTOM: Load your saved custom settings")
+    print()
+    print("  3. Or check individual boxes and click Save")
+    print()
+    print("Changes take effect immediately - no restart needed!")
+    print("=" * 55)
 
     return True
+
 
 def uninstall():
     """Uninstall the hook and toggle."""
     paths = get_paths()
 
-    print("Uninstalling Claude Allow-All Toggle...")
+    print("Uninstalling Claude Permissions Toggle...")
     print()
 
-    # Remove hook script
-    if os.path.exists(paths["hook_dst"]):
-        os.remove(paths["hook_dst"])
-        print(f"1. Removed {paths['hook_dst']}")
-    else:
-        print(f"1. Hook not found at {paths['hook_dst']}")
-
-    # Remove flag file
-    if os.path.exists(paths["flag_file"]):
-        os.remove(paths["flag_file"])
-        print(f"2. Removed flag file {paths['flag_file']}")
-    else:
-        print(f"2. Flag file not found (toggle was OFF)")
+    # Remove hook files
+    for name, path in [
+        ("Python hook", paths["hook_py_dst"]),
+        ("Config file", paths["config_file"]),
+        ("Old cmd hook", paths["old_hook_cmd"]),
+        ("Old flag file", paths["old_flag"]),
+        ("Old permissions cmd", paths["old_permissions_cmd"]),
+    ]:
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"Removed: {path}")
 
     # Remove hook from settings
     if os.path.exists(paths["settings_file"]):
@@ -132,10 +173,13 @@ def uninstall():
                 settings = json.load(f)
 
             if "hooks" in settings and "PreToolUse" in settings["hooks"]:
-                original_count = len(settings["hooks"]["PreToolUse"])
                 settings["hooks"]["PreToolUse"] = [
                     h for h in settings["hooks"]["PreToolUse"]
-                    if not h.get("hooks", [{}])[0].get("command", "").endswith("auto-yes-hook.cmd")
+                    if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
+                        "auto-yes-hook.cmd",
+                        "claude-permissions-hook.cmd",
+                        "claude-permissions-hook.py"
+                    ])
                 ]
 
                 # Clean up empty structures
@@ -147,25 +191,19 @@ def uninstall():
                 with open(paths["settings_file"], 'w') as f:
                     json.dump(settings, f, indent=2)
 
-                if len(settings.get("hooks", {}).get("PreToolUse", [])) < original_count:
-                    print(f"3. Removed hook from settings")
-                else:
-                    print(f"3. Hook not found in settings")
-            else:
-                print(f"3. No hooks found in settings")
+                print("Removed hook from Claude settings")
         except Exception as e:
-            print(f"3. Error updating settings: {e}")
-    else:
-        print(f"3. Settings file not found")
+            print(f"Error updating settings: {e}")
 
     print()
     print("Uninstallation complete!")
 
     return True
 
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Install or uninstall Claude Allow-All Toggle"
+        description="Install or uninstall Claude Permissions Toggle"
     )
     parser.add_argument(
         "--uninstall",
@@ -181,6 +219,7 @@ def main():
         success = install()
 
     sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

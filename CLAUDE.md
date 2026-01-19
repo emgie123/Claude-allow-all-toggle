@@ -1,125 +1,103 @@
-# Claude Allow-All Toggle - Installation Instructions
+# Claude Permissions Toggle - AI Agent Instructions
 
-This file contains instructions for AI agents to install the Claude Code auto-approve toggle.
+Instructions for AI agents working with this project.
 
-## What This Does
+## What This Project Does
 
-Installs a toggle that allows users to enable/disable automatic approval of ALL Claude Code tool calls.
+A GUI toggle for controlling Claude Code tool permissions with:
+- **ALLOW categories** - Which tool types to auto-approve
+- **BLOCK patterns** - Specific destructive commands to always deny
+- **Hot-loading** - Changes take effect immediately
+- **Custom templates** - Save and recall custom configurations
 
-## Installation Steps
+## Architecture
 
-### Step 1: Copy Hook Script
+```
+AutoYesToggle.pyw (GUI)
+        │
+        │ writes
+        ▼
+~/.claude-permissions.json (config)
+        │
+        │ reads
+        ▼
+claude-permissions-hook.py (hook)
+        │
+        │ registered in
+        ▼
+~/.claude/settings.json (Claude Code config)
+```
 
-Copy `auto-yes-hook.cmd` to the user's home directory:
+## Key Files
 
-**Windows:**
+| File | Purpose |
+|------|---------|
+| `AutoYesToggle.pyw` | Tkinter GUI with dark theme |
+| `claude-permissions-hook.py` | PreToolUse hook with pattern matching |
+| `install.py` | Copies hook, configures settings.json |
+| `test_patterns.py` | 53 test cases for pattern verification |
+
+## Installation
+
 ```bash
-copy auto-yes-hook.cmd %USERPROFILE%\
+python install.py
 ```
 
-**Or programmatically:**
-```python
-import shutil
-import os
-shutil.copy('auto-yes-hook.cmd', os.path.expanduser('~'))
-```
+This will:
+1. Copy `claude-permissions-hook.py` to `~/`
+2. Add hook entry to `~/.claude/settings.json`
+3. Clean up any old hook files
 
-### Step 2: Configure Claude Code Settings
+## Config File Format
 
-The hook must be registered in Claude Code's settings file at `%USERPROFILE%\.claude\settings.json`.
-
-**If the file doesn't exist**, create it with:
+`~/.claude-permissions.json`:
 ```json
 {
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "%USERPROFILE%\\auto-yes-hook.cmd"
-      }]
-    }]
-  }
+  "allow": {
+    "read": true,
+    "write": true,
+    "edit": true,
+    "search": true,
+    "web": false,
+    "notebook": false,
+    "task": true,
+    "bash_safe": false,
+    "bash_all": false,
+    "git": false
+  },
+  "block": {
+    "rm_rf": true,
+    "rm_rf_root": true,
+    "git_reset_hard": true,
+    ...
+  },
+  "saved_custom": { ... }  // Optional: saved custom template
 }
 ```
 
-**If the file exists**, merge the `hooks` section. Example Python code:
+## Hook Input Format
 
-```python
-import json
-import os
-
-settings_path = os.path.join(os.path.expanduser('~'), '.claude', 'settings.json')
-
-# Read existing settings
-if os.path.exists(settings_path):
-    with open(settings_path, 'r') as f:
-        settings = json.load(f)
-else:
-    settings = {}
-
-# Add hooks configuration
-hook_entry = {
-    "matcher": "*",
-    "hooks": [{
-        "type": "command",
-        "command": os.path.join(os.path.expanduser('~'), 'auto-yes-hook.cmd')
-    }]
+Claude Code sends JSON via stdin with snake_case keys:
+```json
+{
+  "tool_name": "Read",
+  "tool_input": {"file_path": "..."},
+  "session_id": "...",
+  ...
 }
-
-if "hooks" not in settings:
-    settings["hooks"] = {}
-if "PreToolUse" not in settings["hooks"]:
-    settings["hooks"]["PreToolUse"] = []
-
-# Check if hook already exists
-hook_exists = any(
-    h.get("hooks", [{}])[0].get("command", "").endswith("auto-yes-hook.cmd")
-    for h in settings["hooks"]["PreToolUse"]
-)
-
-if not hook_exists:
-    settings["hooks"]["PreToolUse"].append(hook_entry)
-
-# Write settings
-os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-with open(settings_path, 'w') as f:
-    json.dump(settings, f, indent=2)
 ```
 
-### Step 3: Place Toggle on Desktop
+**Important:** Use `tool_name` and `tool_input` (not camelCase).
 
-Copy the toggle GUI to the user's desktop:
+## Testing Patterns
+
+Run without executing any commands:
+```bash
+python test_patterns.py
+```
+
+## Uninstall
 
 ```bash
-copy AutoYesToggle.pyw %USERPROFILE%\Desktop\
+python install.py --uninstall
 ```
-
-### Step 4: Verify Installation
-
-1. The hook script should be at: `%USERPROFILE%\auto-yes-hook.cmd`
-2. The settings file should contain the hooks configuration
-3. The toggle should be at: `%USERPROFILE%\Desktop\AutoYesToggle.pyw`
-
-### Step 5: Test
-
-1. Double-click `AutoYesToggle.pyw` on the desktop
-2. Click to turn ON (green)
-3. In Claude Code, any tool call should now auto-approve
-4. Click to turn OFF (red) to restore normal permission flow
-
-## File Locations Summary
-
-| File | Destination |
-|------|-------------|
-| `auto-yes-hook.cmd` | `%USERPROFILE%\auto-yes-hook.cmd` |
-| `AutoYesToggle.pyw` | `%USERPROFILE%\Desktop\AutoYesToggle.pyw` |
-| Settings entry | `%USERPROFILE%\.claude\settings.json` |
-| Flag file (created by toggle) | `%USERPROFILE%\.claude-auto-yes` |
-
-## Uninstallation
-
-1. Delete `%USERPROFILE%\auto-yes-hook.cmd`
-2. Delete `%USERPROFILE%\.claude-auto-yes` (if exists)
-3. Remove the PreToolUse hook entry from `%USERPROFILE%\.claude\settings.json`
-4. Delete `%USERPROFILE%\Desktop\AutoYesToggle.pyw`
