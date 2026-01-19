@@ -147,17 +147,18 @@ def install():
     return True
 
 
-def uninstall():
+def uninstall(full=False):
     """Uninstall the hook and toggle."""
     paths = get_paths()
 
     print("Uninstalling Claude Permissions Toggle...")
     print()
 
-    # Remove hook files
+    # Remove installed files
     for name, path in [
         ("Python hook", paths["hook_py_dst"]),
         ("Config file", paths["config_file"]),
+        ("Debug log", os.path.join(paths["home"], ".claude-hook-debug.log")),
         ("Old cmd hook", paths["old_hook_cmd"]),
         ("Old flag file", paths["old_flag"]),
         ("Old permissions cmd", paths["old_permissions_cmd"]),
@@ -198,6 +199,18 @@ def uninstall():
     print()
     print("Uninstallation complete!")
 
+    # Full uninstall: also remove the repo folder
+    if full:
+        print()
+        print("Removing project folder...")
+        import shutil
+        try:
+            shutil.rmtree(paths["script_dir"])
+            print(f"Removed: {paths['script_dir']}")
+        except Exception as e:
+            print(f"Could not remove project folder: {e}")
+            print("You may need to delete it manually.")
+
     return True
 
 
@@ -208,13 +221,18 @@ def main():
     parser.add_argument(
         "--uninstall",
         action="store_true",
-        help="Uninstall instead of install"
+        help="Uninstall installed files and remove hook from settings"
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Full uninstall: also delete the project folder (use with --uninstall)"
     )
 
     args = parser.parse_args()
 
     if args.uninstall:
-        success = uninstall()
+        success = uninstall(full=args.full)
     else:
         success = install()
 

@@ -56,7 +56,7 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 ```bash
 git clone https://github.com/Trigun1127/Claude-allow-all-toggle.git
 cd Claude-allow-all-toggle
-python install.py
+python claude-permissions-toggle.py
 ```
 
 Then double-click `AutoYesToggle.pyw` to launch.
@@ -121,7 +121,7 @@ This runs 53 test cases against the regex patterns to ensure destructive command
 |------|---------|
 | `AutoYesToggle.pyw` | Dark-themed GUI toggle |
 | `claude-permissions-hook.py` | Hook logic with pattern matching |
-| `install.py` | Automated installer |
+| `claude-permissions-toggle.py` | Installer / uninstaller |
 | `test_patterns.py` | Pattern verification test suite |
 
 ## Config Location
@@ -132,9 +132,20 @@ No file = OFF mode (Claude asks for everything).
 
 ## Uninstall
 
+**Regular uninstall** (keeps project folder for reinstall):
 ```bash
-python install.py --uninstall
+python claude-permissions-toggle.py --uninstall
 ```
+
+**Full uninstall** (removes everything including project folder):
+```bash
+python claude-permissions-toggle.py --uninstall --full
+```
+
+| Option | Removes |
+|--------|---------|
+| `--uninstall` | Installed hook, config, settings.json entry |
+| `--uninstall --full` | All of the above + project folder |
 
 ## Requirements
 
