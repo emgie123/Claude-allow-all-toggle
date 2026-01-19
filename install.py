@@ -25,8 +25,7 @@ def get_paths():
         "script_dir": script_dir,
         "hook_src": os.path.join(script_dir, "auto-yes-hook.cmd"),
         "hook_dst": os.path.join(home, "auto-yes-hook.cmd"),
-        "toggle_src": os.path.join(script_dir, "AutoYesToggle.pyw"),
-        "toggle_dst": os.path.join(home, "Desktop", "AutoYesToggle.pyw"),
+        "toggle_file": os.path.join(script_dir, "AutoYesToggle.pyw"),
         "settings_file": os.path.join(home, ".claude", "settings.json"),
         "flag_file": os.path.join(home, ".claude-auto-yes"),
     }
@@ -47,18 +46,8 @@ def install():
         print(f"   ERROR: Source file not found: {paths['hook_src']}")
         return False
 
-    # Step 2: Copy toggle to Desktop
-    print(f"2. Copying toggle to {paths['toggle_dst']}")
-    if os.path.exists(paths["toggle_src"]):
-        os.makedirs(os.path.dirname(paths["toggle_dst"]), exist_ok=True)
-        shutil.copy(paths["toggle_src"], paths["toggle_dst"])
-        print("   Done!")
-    else:
-        print(f"   ERROR: Source file not found: {paths['toggle_src']}")
-        return False
-
-    # Step 3: Configure Claude Code settings
-    print(f"3. Configuring Claude Code settings at {paths['settings_file']}")
+    # Step 2: Configure Claude Code settings
+    print(f"2. Configuring Claude Code settings at {paths['settings_file']}")
 
     # Load existing settings or create new
     settings = {}
@@ -108,7 +97,7 @@ def install():
     print("Installation complete!")
     print()
     print("To use:")
-    print(f"  1. Double-click: {paths['toggle_dst']}")
+    print(f"  1. Double-click: {paths['toggle_file']}")
     print("  2. Click the button to toggle ON/OFF")
     print("  3. When ON (green), all Claude Code tools auto-approve")
     print("=" * 50)
@@ -136,13 +125,6 @@ def uninstall():
     else:
         print(f"2. Flag file not found (toggle was OFF)")
 
-    # Remove toggle from Desktop
-    if os.path.exists(paths["toggle_dst"]):
-        os.remove(paths["toggle_dst"])
-        print(f"3. Removed {paths['toggle_dst']}")
-    else:
-        print(f"3. Toggle not found at {paths['toggle_dst']}")
-
     # Remove hook from settings
     if os.path.exists(paths["settings_file"]):
         try:
@@ -166,15 +148,15 @@ def uninstall():
                     json.dump(settings, f, indent=2)
 
                 if len(settings.get("hooks", {}).get("PreToolUse", [])) < original_count:
-                    print(f"4. Removed hook from settings")
+                    print(f"3. Removed hook from settings")
                 else:
-                    print(f"4. Hook not found in settings")
+                    print(f"3. Hook not found in settings")
             else:
-                print(f"4. No hooks found in settings")
+                print(f"3. No hooks found in settings")
         except Exception as e:
-            print(f"4. Error updating settings: {e}")
+            print(f"3. Error updating settings: {e}")
     else:
-        print(f"4. Settings file not found")
+        print(f"3. Settings file not found")
 
     print()
     print("Uninstallation complete!")
