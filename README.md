@@ -7,10 +7,12 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 
 ## Features
 
+- **Zero overhead when closed** - Hook auto-unregisters on close, Claude uses native behavior
+- **Auto-registers on open** - No installer needed, just launch the app
 - **Hot-loading** - Changes take effect immediately, no restart needed
 - **Two-layer system** - ALLOW categories + BLOCK specific patterns
 - **13 destructive patterns** blocked by default (rm -rf, git reset --hard, etc.)
-- **Save custom templates** - Save your preferred settings and recall them
+- **Save custom templates** - Settings persist across app restarts
 - **Minimal mode** - Collapse to single ON/OFF toggle
 - **Dark theme** with scrollable UI
 
@@ -71,17 +73,27 @@ Click the `_` button to collapse into a compact single-toggle view:
 ```bash
 git clone https://github.com/Trigun1127/Claude-allow-all-toggle.git
 cd Claude-allow-all-toggle
-python claude-permissions-toggle.py
 ```
 
-Then double-click `AutoYesToggle.pyw` to launch.
+Then double-click `AutoYesToggle.pyw` to launch. That's it!
 
 **Notes:**
-- The installer configures Claude Code to run the hook directly from the repo folder
-- **Auto-updates:** After `git pull`, changes take effect immediately (no reinstall needed)
-- If you have multiple Python installations, you may need to manually update the path in `~/.claude/settings.json`
+- **No installer needed** - The app registers the hook automatically when opened
+- **Auto-updates:** After `git pull`, changes take effect immediately
+- If you have multiple Python installations, the app uses whichever `python` runs it
 
 ## How It Works
+
+### App Lifecycle
+
+| Event | What Happens |
+|-------|--------------|
+| **App opens** | Registers hook in `~/.claude/settings.json` |
+| **App closes** | Unregisters hook, Claude reverts to native behavior |
+
+When the app is closed, there's **zero overhead** - no hook runs, no Python spawns. Claude Code uses its built-in permission logic.
+
+Your saved custom template and preferences (minimal mode, last template) persist across restarts.
 
 ### Two-Layer Permission System
 
@@ -160,26 +172,19 @@ This runs 53 test cases against the regex patterns to ensure destructive command
 
 ## Config Location
 
-`~/.claude-permissions.json` - Created when you enable any permissions.
+`~/.claude-permissions.json` - Stores your saved custom template and preferences.
 
-No file = OFF mode (Claude asks for everything).
+When the app closes, active permissions are cleared but your saved template persists.
 
 ## Uninstall
 
-**Regular uninstall** (keeps project folder for reinstall):
-```bash
-python claude-permissions-toggle.py --uninstall
-```
+Since the hook auto-unregisters when the app closes, simply closing the app is enough for normal use.
 
-**Full uninstall** (removes everything including project folder):
+To fully remove:
 ```bash
-python claude-permissions-toggle.py --uninstall --full
+python claude-permissions-toggle.py --uninstall       # Removes config files
+python claude-permissions-toggle.py --uninstall --full  # Also removes project folder
 ```
-
-| Option | Removes |
-|--------|---------|
-| `--uninstall` | Installed hook, config, settings.json entry |
-| `--uninstall --full` | All of the above + project folder |
 
 ## Requirements
 

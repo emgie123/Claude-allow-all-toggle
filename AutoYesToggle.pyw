@@ -2,13 +2,100 @@
 Claude Permissions Toggle
 Category-based permissions with granular block list.
 Supports minimal mode: single ON/OFF toggle.
+
+When app opens: registers hook in Claude settings.json
+When app closes: unregisters hook (Claude uses default behavior)
 """
 import tkinter as tk
 from tkinter import ttk
 import os
+import sys
 import json
 
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), '.claude-permissions.json')
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+HOOK_PY_SRC = os.path.join(SCRIPT_DIR, "claude-permissions-hook.py")
+
+
+def get_python_path():
+    """Get the full path to the Python executable."""
+    return sys.executable
+
+
+def register_hook():
+    """Register the permissions hook in Claude's settings.json."""
+    # Load existing settings or create new
+    settings = {}
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+        except json.JSONDecodeError:
+            settings = {}
+
+    # Build hook command
+    hook_command = f"{get_python_path()} {HOOK_PY_SRC}"
+
+    hook_entry = {
+        "matcher": "*",
+        "hooks": [{
+            "type": "command",
+            "command": hook_command
+        }]
+    }
+
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+    if "PreToolUse" not in settings["hooks"]:
+        settings["hooks"]["PreToolUse"] = []
+
+    # Remove old hooks if present, then add new one
+    settings["hooks"]["PreToolUse"] = [
+        h for h in settings["hooks"]["PreToolUse"]
+        if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
+            "auto-yes-hook.cmd",
+            "claude-permissions-hook.cmd",
+            "claude-permissions-hook.py"
+        ])
+    ]
+    settings["hooks"]["PreToolUse"].append(hook_entry)
+
+    # Write settings
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f, indent=2)
+
+
+def unregister_hook():
+    """Unregister the permissions hook from Claude's settings.json."""
+    if not os.path.exists(SETTINGS_FILE):
+        return
+
+    try:
+        with open(SETTINGS_FILE, 'r') as f:
+            settings = json.load(f)
+
+        if "hooks" in settings and "PreToolUse" in settings["hooks"]:
+            settings["hooks"]["PreToolUse"] = [
+                h for h in settings["hooks"]["PreToolUse"]
+                if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
+                    "auto-yes-hook.cmd",
+                    "claude-permissions-hook.cmd",
+                    "claude-permissions-hook.py"
+                ])
+            ]
+
+            # Clean up empty structures
+            if not settings["hooks"]["PreToolUse"]:
+                del settings["hooks"]["PreToolUse"]
+            if not settings["hooks"]:
+                del settings["hooks"]
+
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(settings, f, indent=2)
+    except Exception:
+        pass  # Fail silently on close
 
 # Allow categories
 ALLOW_CATEGORIES = [
@@ -61,6 +148,9 @@ TEMPLATES = {
 class PermissionsToggle:
     def __init__(self):
         self.root = tk.Tk()
+
+        # Register hook on startup
+        register_hook()
 
         # Dark theme colors
         self.c = {
@@ -130,16 +220,27 @@ class PermissionsToggle:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def load_config(self):
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r') as f:
-                    return json.load(f)
-            except:
-                pass
-        return {
+        # Default config
+        default = {
             "allow": {cat[0]: False for cat in ALLOW_CATEGORIES},
             "block": {pat[0]: True for pat in BLOCK_PATTERNS},
         }
+
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    loaded = json.load(f)
+                # Merge loaded config with defaults (preserves saved_custom, etc.)
+                default.update(loaded)
+                # Ensure allow/block dicts have all keys
+                if "allow" not in default:
+                    default["allow"] = {cat[0]: False for cat in ALLOW_CATEGORIES}
+                if "block" not in default:
+                    default["block"] = {pat[0]: True for pat in BLOCK_PATTERNS}
+            except:
+                pass
+
+        return default
 
     def save_config(self):
         # Always save minimal_mode preference and last_active_template
@@ -469,9 +570,10 @@ class PermissionsToggle:
 
     def save_custom(self):
         """Save current settings as the custom template."""
+        # Read directly from UI vars to get current checkbox state
         self.config["saved_custom"] = {
-            "allow": dict(self.config["allow"]),
-            "block": dict(self.config["block"])
+            "allow": {cat_id: var.get() for cat_id, var in self.allow_vars.items()},
+            "block": {pat_id: var.get() for pat_id, var in self.block_vars.items()}
         }
         self.save_config()
         # Flash green to confirm save
@@ -538,9 +640,26 @@ class PermissionsToggle:
             self.info_label.config(text="")
 
     def on_close(self):
-        # Delete config on close - permissions reset to OFF
-        if os.path.exists(CONFIG_FILE):
+        # Unregister hook - Claude reverts to default behavior
+        unregister_hook()
+
+        # Preserve saved_custom and preferences, but clear active permissions
+        preserved = {}
+        if "saved_custom" in self.config:
+            preserved["saved_custom"] = self.config["saved_custom"]
+        if "minimal_mode" in self.config:
+            preserved["minimal_mode"] = self.config["minimal_mode"]
+        if "last_active_template" in self.config:
+            preserved["last_active_template"] = self.config["last_active_template"]
+
+        if preserved:
+            # Save only the preserved settings
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(preserved, f, indent=2)
+        elif os.path.exists(CONFIG_FILE):
+            # No preserved settings, delete the file
             os.remove(CONFIG_FILE)
+
         self.root.destroy()
 
     def run(self):
