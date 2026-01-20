@@ -53,14 +53,18 @@ def install():
     print("=" * 55)
     print()
 
-    # Step 1: Copy Python hook
-    print(f"1. Copying hook to: {paths['hook_py_dst']}")
+    # Step 1: Verify hook exists (no longer copying - use source directly)
+    print(f"1. Verifying hook file: {paths['hook_py_src']}")
     if os.path.exists(paths["hook_py_src"]):
-        shutil.copy(paths["hook_py_src"], paths["hook_py_dst"])
-        print("   Done!")
+        print("   Found!")
     else:
         print(f"   ERROR: Source file not found: {paths['hook_py_src']}")
         return False
+
+    # Remove old copied hook if it exists
+    if os.path.exists(paths["hook_py_dst"]):
+        os.remove(paths["hook_py_dst"])
+        print(f"   Removed old copy at: {paths['hook_py_dst']}")
 
     # Step 2: Configure Claude Code settings
     print(f"\n2. Configuring Claude Code settings")
@@ -76,8 +80,8 @@ def install():
             print("   Warning: Could not parse existing settings, creating new")
             settings = {}
 
-    # Build hook command with full Python path
-    hook_command = f"{paths['python_exe']} {paths['hook_py_dst']}"
+    # Build hook command with full Python path - point to SOURCE file so updates work immediately
+    hook_command = f"{paths['python_exe']} {paths['hook_py_src']}"
 
     hook_entry = {
         "matcher": "*",
@@ -142,6 +146,9 @@ def install():
     print("  3. Or check individual boxes and click Save")
     print()
     print("Changes take effect immediately - no restart needed!")
+    print()
+    print("NOTE: Hook runs directly from repo folder.")
+    print("      Git pull updates take effect immediately!")
     print("=" * 55)
 
     return True
