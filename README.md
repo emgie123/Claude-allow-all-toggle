@@ -76,7 +76,10 @@ python claude-permissions-toggle.py
 
 Then double-click `AutoYesToggle.pyw` to launch.
 
-**Note:** The installer will configure Claude Code to use your system's Python. If you have multiple Python installations, you may need to manually update the path in `~/.claude/settings.json`.
+**Notes:**
+- The installer configures Claude Code to run the hook directly from the repo folder
+- **Auto-updates:** After `git pull`, changes take effect immediately (no reinstall needed)
+- If you have multiple Python installations, you may need to manually update the path in `~/.claude/settings.json`
 
 ## How It Works
 
@@ -86,6 +89,22 @@ Then double-click `AutoYesToggle.pyw` to launch.
 2. **BLOCK** = Specific dangerous patterns to always deny (even if category is allowed)
 
 **Example:** You can allow "Git commands" but still block "git push --force".
+
+### Hook Response Format
+
+The hook always outputs explicit JSON responses to Claude Code:
+
+| Response | Meaning |
+|----------|---------|
+| `"permissionDecision": "allow"` | Auto-approve the tool |
+| `"permissionDecision": "deny"` | Auto-block the tool |
+| `"permissionDecision": "ask"` | Prompt user for permission |
+
+**Note:** Claude Code treats no output as "allow", so the hook must always respond.
+
+### Git Commands Override
+
+When `git=OFF`, git commands will **always** ask for permission, even if `bash_all=ON`. This ensures granular control over git operations.
 
 ### Templates
 

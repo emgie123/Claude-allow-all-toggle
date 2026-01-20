@@ -45,9 +45,10 @@ python claude-permissions-toggle.py
 ```
 
 This will:
-1. Copy `claude-permissions-hook.py` to `~/`
-2. Add hook entry to `~/.claude/settings.json`
-3. Clean up any old hook files
+1. Register hook in `~/.claude/settings.json` (points to repo source)
+2. Clean up any old hook files
+
+**Auto-updates:** Hook runs directly from repo folder - `git pull` updates take effect immediately.
 
 ## Minimal Mode
 
@@ -118,6 +119,31 @@ Claude Code sends JSON via stdin with snake_case keys:
 ```
 
 **Important:** Use `tool_name` and `tool_input` (not camelCase).
+
+## Hook Output Format
+
+The hook **must always** output a JSON response. No output = allow (Claude Code behavior).
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow|deny|ask",
+    "permissionDecisionReason": "Reason string"
+  }
+}
+```
+
+| Decision | Effect |
+|----------|--------|
+| `"allow"` | Auto-approve, no user prompt |
+| `"deny"` | Auto-block, tool won't run |
+| `"ask"` | Prompt user for permission |
+
+## Git Override Behavior
+
+When `git=OFF`, git commands always return `"ask"` even if `bash_all=ON`.
+This ensures granular control - you can allow all bash but still require approval for git.
 
 ## Testing Patterns
 
