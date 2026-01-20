@@ -4,9 +4,11 @@ Claude Permissions Hook
 Checks allow categories + block patterns from config.
 
 Logic:
-1. Check if command matches a BLOCK pattern -> BLOCK
+1. Check if command matches a BLOCK pattern -> DENY
 2. Check if tool/command matches an ALLOW category -> ALLOW
-3. Otherwise -> let Claude ask (no output)
+3. Otherwise -> ASK (explicit permission request)
+
+Note: Must always output JSON response. No output = allow (Claude Code behavior).
 """
 import sys
 import os
@@ -134,17 +136,30 @@ def check_permission(tool_name, tool_input, config):
     return None
 
 
+def ask_permission(reason="Requires user approval"):
+    """Output JSON to ask for user permission."""
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason
+        }
+    }))
+
 def main():
     # Load config
     config = load_config()
     if config is None:
-        sys.exit(0)  # No config = OFF mode, let Claude ask
+        # No config = OFF mode, ask for everything
+        ask_permission("Permissions toggle: OFF mode")
+        return
 
     # Read tool info from stdin
     try:
         input_data = json.loads(sys.stdin.read())
     except:
-        sys.exit(0)
+        ask_permission("Permissions toggle: Could not read input")
+        return
 
     # Note: Claude Code uses snake_case (tool_name, tool_input)
     tool_name = input_data.get("tool_name", "")
@@ -165,11 +180,19 @@ def main():
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "block",
+                "permissionDecision": "deny",
                 "permissionDecisionReason": f"Blocked by toggle: {result[1]} pattern"
             }
         }))
-    # else: no output = let Claude ask normally
+    else:
+        # Explicitly ask for permission (no output doesn't work)
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": "Requires user approval"
+            }
+        }))
 
 
 if __name__ == "__main__":
