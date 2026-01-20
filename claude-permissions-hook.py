@@ -115,19 +115,19 @@ def check_permission(tool_name, tool_input, config):
     if blocked:
         return ("block", blocked)
 
-    # Check git category
+    # Check git category - if git is OFF, require approval (don't fall through)
     if is_git_command(cmd):
         if allow.get("git", False):
             return "allow"
-        # Fall through to bash_all
+        return None  # Git OFF = always ask, even if bash_all is ON
 
-    # Check bash_safe
+    # Check bash_safe - if bash_safe is OFF, fall through to bash_all
     if is_safe_bash(cmd):
         if allow.get("bash_safe", False):
             return "allow"
-        # Fall through to bash_all
+        # Safe commands can still be allowed by bash_all
 
-    # Check bash_all (allows anything not blocked)
+    # Check bash_all (allows anything not blocked, except git when git=OFF)
     if allow.get("bash_all", False):
         return "allow"
 
