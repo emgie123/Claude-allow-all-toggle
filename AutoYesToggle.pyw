@@ -1,6 +1,7 @@
 """
 Claude Permissions Toggle
 Category-based permissions with granular block list.
+Supports minimal mode: single ON/OFF toggle.
 """
 import tkinter as tk
 from tkinter import ttk
@@ -60,10 +61,6 @@ TEMPLATES = {
 class PermissionsToggle:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Claude Permissions")
-        self.root.minsize(340, 400)
-        self.root.geometry("340x650")
-        self.root.attributes("-topmost", True)
 
         # Dark theme colors
         self.c = {
@@ -81,6 +78,7 @@ class PermissionsToggle:
 
         # Configure root
         self.root.configure(bg=self.c["bg"])
+        self.root.attributes("-topmost", True)
 
         # Dark title bar (Windows 10/11)
         try:
@@ -112,15 +110,22 @@ class PermissionsToggle:
         self.config = self.load_config()
         self.current_template = self.detect_template()
 
-        # Build UI
-        self.build_ui()
-        self.update_display()
+        # Load minimal mode preference and last active template
+        self.minimal_mode = self.config.get("minimal_mode", False)
+        self.last_active_template = self.config.get("last_active_template", "all_safe")
 
-        # Position bottom-right
-        self.root.update_idletasks()
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        self.root.geometry(f"+{screen_w - 360}+{screen_h - 720}")
+        # Track if currently "on" (not off template)
+        self.is_on = self.current_template != "off"
+
+        # If currently on, update last_active_template
+        if self.is_on and self.current_template != "off":
+            self.last_active_template = self.current_template
+
+        # Build appropriate UI
+        if self.minimal_mode:
+            self.build_minimal_ui()
+        else:
+            self.build_full_ui()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -137,9 +142,14 @@ class PermissionsToggle:
         }
 
     def save_config(self):
+        # Always save minimal_mode preference and last_active_template
+        self.config["minimal_mode"] = self.minimal_mode
+        self.config["last_active_template"] = self.last_active_template
+
         if not any(self.config["allow"].values()):
-            if os.path.exists(CONFIG_FILE):
-                os.remove(CONFIG_FILE)
+            # When OFF, still save the file to preserve minimal_mode preference
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(self.config, f, indent=2)
         else:
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(self.config, f, indent=2)
@@ -151,8 +161,112 @@ class PermissionsToggle:
                 return name
         return "custom"
 
-    def build_ui(self):
+    def build_minimal_ui(self):
+        """Build the minimal single-toggle UI."""
         c = self.c
+
+        self.root.title("Claude")
+        self.root.minsize(160, 50)
+        self.root.geometry("160x50")
+
+        # Position bottom-right
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"+{screen_w - 180}+{screen_h - 120}")
+
+        # Main frame
+        main = tk.Frame(self.root, bg=c["bg"])
+        main.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Single row: expand button + power toggle
+        row = tk.Frame(main, bg=c["bg"])
+        row.pack(fill="x", expand=True)
+
+        # Expand button (small, left side)
+        expand_btn = tk.Button(row, text="...", font=("Segoe UI", 8),
+                              bd=0, relief="flat", cursor="hand2",
+                              bg=c["card"], fg=c["muted"],
+                              padx=6, pady=2,
+                              command=self.expand_ui)
+        expand_btn.pack(side="left", padx=(0, 5))
+
+        # Power toggle button (main area)
+        self.power_btn = tk.Button(row, text="", font=("Segoe UI", 11, "bold"),
+                                   bd=0, relief="flat", cursor="hand2",
+                                   padx=15, pady=6,
+                                   command=self.toggle_power)
+        self.power_btn.pack(side="left", fill="x", expand=True)
+
+        self.update_minimal_display()
+
+    def update_minimal_display(self):
+        """Update the minimal UI display."""
+        c = self.c
+
+        if self.is_on:
+            # Show current mode name
+            mode_names = {"all_safe": "ALL*", "all": "ALL", "custom": "CUSTOM"}
+            mode_colors = {"all_safe": c["green"], "all": c["red"], "custom": c["purple"]}
+
+            mode = self.last_active_template
+            label = mode_names.get(mode, "ON")
+            color = mode_colors.get(mode, c["green"])
+
+            self.power_btn.config(text=label, bg=color, fg="white")
+            self.root.title(f"Claude: {label}")
+        else:
+            self.power_btn.config(text="OFF", bg=c["gray"], fg=c["text"])
+            self.root.title("Claude: OFF")
+
+    def toggle_power(self):
+        """Toggle between ON (last active mode) and OFF."""
+        if self.is_on:
+            # Turn OFF
+            self.apply_template_silent("off")
+            self.is_on = False
+        else:
+            # Turn ON - restore last active template
+            self.apply_template_silent(self.last_active_template)
+            self.is_on = True
+
+        self.save_config()
+        self.update_minimal_display()
+
+    def apply_template_silent(self, name):
+        """Apply a template without UI updates (for minimal mode)."""
+        preset = TEMPLATES.get(name, TEMPLATES["all_safe"])
+        for cat_id, value in preset["allow"].items():
+            self.config["allow"][cat_id] = value
+        for pat_id, value in preset["block"].items():
+            self.config["block"][pat_id] = value
+        self.current_template = name
+
+    def expand_ui(self):
+        """Switch to full UI mode."""
+        self.minimal_mode = False
+        self.config["minimal_mode"] = False
+        self.save_config()
+
+        # Destroy current widgets and rebuild
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        self.build_full_ui()
+
+    def build_full_ui(self):
+        """Build the full expanded UI."""
+        c = self.c
+
+        self.root.title("Claude Permissions")
+        self.root.minsize(340, 400)
+        self.root.geometry("340x650")
+
+        # Position bottom-right
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"+{screen_w - 360}+{screen_h - 720}")
 
         # Main container with flex
         self.root.grid_rowconfigure(0, weight=1)
@@ -194,8 +308,20 @@ class PermissionsToggle:
         header = tk.Frame(main, bg=c["bg"])
         header.pack(fill="x", padx=15, pady=(15, 5))
 
-        tk.Label(header, text="Claude Permissions", font=("Segoe UI", 16, "bold"),
-                bg=c["bg"], fg=c["text"]).pack(anchor="w")
+        # Title row with minimize button
+        title_row = tk.Frame(header, bg=c["bg"])
+        title_row.pack(fill="x")
+
+        tk.Label(title_row, text="Claude Permissions", font=("Segoe UI", 16, "bold"),
+                bg=c["bg"], fg=c["text"]).pack(side="left")
+
+        # Minimize button (right side of title)
+        minimize_btn = tk.Button(title_row, text="_", font=("Segoe UI", 10, "bold"),
+                                bd=0, relief="flat", cursor="hand2",
+                                bg=c["card"], fg=c["muted"],
+                                padx=8, pady=2,
+                                command=self.minimize_ui)
+        minimize_btn.pack(side="right")
 
         self.status_label = tk.Label(header, text="", font=("Segoe UI", 10),
                                      bg=c["bg"], fg=c["muted"])
@@ -239,6 +365,32 @@ class PermissionsToggle:
         self.info_label = tk.Label(main, text="", font=("Segoe UI", 9),
                                   bg=c["bg"], fg=c["muted"], wraplength=300, justify="left")
         self.info_label.pack(fill="x", padx=15, pady=(10, 15))
+
+        self.update_display()
+
+    def minimize_ui(self):
+        """Switch to minimal UI mode."""
+        self.minimal_mode = True
+        self.config["minimal_mode"] = True
+
+        # Remember current mode if not OFF
+        if self.current_template != "off":
+            self.last_active_template = self.current_template
+            self.is_on = True
+        else:
+            self.is_on = False
+
+        self.save_config()
+
+        # Destroy current widgets and rebuild
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        # Clear vars that full UI uses
+        self.allow_vars = {}
+        self.block_vars = {}
+
+        self.build_minimal_ui()
 
     def build_section(self, parent, title, items, config_key, smaller=False):
         c = self.c
@@ -284,6 +436,14 @@ class PermissionsToggle:
             self.block_vars[pat_id].set(value)
             self.config["block"][pat_id] = value
         self.current_template = name
+
+        # Track last active template (if not OFF)
+        if name != "off":
+            self.last_active_template = name
+            self.is_on = True
+        else:
+            self.is_on = False
+
         self.save_config()
         self.update_display()
         # Reset save button (templates auto-save)
@@ -295,6 +455,14 @@ class PermissionsToggle:
         for pat_id, var in self.block_vars.items():
             self.config["block"][pat_id] = var.get()
         self.current_template = self.detect_template()
+
+        # Track last active template (if not OFF)
+        if self.current_template != "off":
+            self.last_active_template = self.current_template
+            self.is_on = True
+        else:
+            self.is_on = False
+
         # Hot save - takes effect immediately
         self.save_config()
         self.update_display()
@@ -324,6 +492,8 @@ class PermissionsToggle:
                     self.block_vars[pat_id].set(value)
                     self.config["block"][pat_id] = value
             self.current_template = "custom"
+            self.last_active_template = "custom"
+            self.is_on = True
             self.save_config()
             self.update_display()
 
@@ -368,6 +538,9 @@ class PermissionsToggle:
             self.info_label.config(text="")
 
     def on_close(self):
+        # Delete config on close - permissions reset to OFF
+        if os.path.exists(CONFIG_FILE):
+            os.remove(CONFIG_FILE)
         self.root.destroy()
 
     def run(self):

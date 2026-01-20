@@ -9,6 +9,7 @@ A GUI toggle for controlling Claude Code tool permissions with:
 - **BLOCK patterns** - Specific destructive commands to always deny
 - **Hot-loading** - Changes take effect immediately
 - **Custom templates** - Save and recall custom configurations
+- **Minimal mode** - Collapse to single ON/OFF toggle
 
 ## Architecture
 
@@ -48,11 +49,40 @@ This will:
 2. Add hook entry to `~/.claude/settings.json`
 3. Clean up any old hook files
 
+## Minimal Mode
+
+Collapse the full UI into a single ON/OFF toggle button:
+
+**Full UI:**
+```
+┌─────────────────────────────────────────┐
+│ Claude Permissions               [ _ ] │ ← Click to minimize
+│ ALL* - 13 destructive blocked          │
+├─────────────────────────────────────────┤
+│ [OFF] [ALL*] [ALL] [CUSTOM]    [Save] │
+│ ...checkboxes...                        │
+└─────────────────────────────────────────┘
+```
+
+**Minimal UI:**
+```
+┌──────────────────────┐
+│ [...] [   ALL*    ] │ ← Single toggle, [...] expands
+└──────────────────────┘
+```
+
+- Click `_` in full UI to minimize
+- Click `...` in minimal UI to expand
+- Toggle remembers last active mode (ALL*, ALL, or CUSTOM)
+- Preference persists across restarts
+
 ## Config File Format
 
 `~/.claude-permissions.json`:
 ```json
 {
+  "minimal_mode": false,
+  "last_active_template": "all_safe",
   "allow": {
     "read": true,
     "write": true,
@@ -71,7 +101,7 @@ This will:
     "git_reset_hard": true,
     ...
   },
-  "saved_custom": { ... }  // Optional: saved custom template
+  "saved_custom": { ... }
 }
 ```
 

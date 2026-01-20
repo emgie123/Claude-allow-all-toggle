@@ -11,6 +11,7 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 - **Two-layer system** - ALLOW categories + BLOCK specific patterns
 - **13 destructive patterns** blocked by default (rm -rf, git reset --hard, etc.)
 - **Save custom templates** - Save your preferred settings and recall them
+- **Minimal mode** - Collapse to single ON/OFF toggle
 - **Dark theme** with scrollable UI
 
 ## Screenshot
@@ -50,6 +51,20 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 │  ☑ chmod -R 777 /                       │
 └──────────────────────────────────────────┘
 ```
+
+### Minimal Mode
+
+Click the `_` button to collapse into a compact single-toggle view:
+
+```
+┌──────────────────────┐
+│ [...] [   ALL*    ] │
+└──────────────────────┘
+```
+
+- Single button toggles between your last active mode and OFF
+- Click `...` to expand back to full UI
+- Remembers your preference across restarts
 
 ## Installation
 
