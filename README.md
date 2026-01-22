@@ -118,6 +118,30 @@ The hook always outputs explicit JSON responses to Claude Code:
 
 When `git=OFF`, git commands will **always** ask for permission, even if `bash_all=ON`. This ensures granular control over git operations.
 
+### Chained Command Handling
+
+Claude often chains commands together (e.g., `cd /path && git push`). The hook properly handles these:
+
+**Git detection:** Checks ALL parts of a chained command for git operations:
+```bash
+# All detected as git commands:
+git push                      # Direct git command
+cd /path && git push          # Git in second part
+echo "done" && git status     # Git in chain
+VAR=x git push                # Git with env vars
+```
+
+**Safe bash detection:** Requires ALL parts to be safe:
+```bash
+# Safe (all parts in safe list):
+echo "test" && npm install
+
+# NOT safe (tasklist not in safe list):
+echo "test" && tasklist       # Falls through to bash_all check
+```
+
+This prevents bypassing permissions by prefixing commands with safe operations.
+
 ### Templates
 
 | Button | What it does |

@@ -74,14 +74,32 @@ def load_config():
 
 
 def is_git_command(cmd):
-    """Check if command is a git command."""
-    return cmd.strip().startswith("git ") or cmd.strip().startswith("git.exe ")
+    """Check if command contains a git command (handles chained commands)."""
+    # Split on && || ; | and check each part
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip()
+        if part.startswith("git ") or part.startswith("git.exe "):
+            return True
+        # Handle env vars like VAR=x git push
+        if " git " in part or part.endswith(" git"):
+            return True
+    return False
 
 
 def is_safe_bash(cmd):
-    """Check if command starts with a safe prefix."""
-    cmd_lower = cmd.lower().strip()
-    return any(cmd_lower.startswith(prefix.lower()) for prefix in SAFE_BASH)
+    """Check if ALL parts of a chained command are safe."""
+    # Split on && || ; | and check each part
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+        # Check if this part starts with a safe prefix
+        is_part_safe = any(part.startswith(prefix.lower()) for prefix in SAFE_BASH)
+        if not is_part_safe:
+            return False  # One unsafe part = whole chain is unsafe
+    return True  # All parts are safe
 
 
 def check_blocks(cmd, config):
@@ -145,6 +163,7 @@ def ask_permission(reason="Requires user approval"):
             "permissionDecisionReason": reason
         }
     }))
+
 
 def main():
     # Load config
