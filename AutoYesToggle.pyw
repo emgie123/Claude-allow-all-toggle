@@ -107,6 +107,7 @@ ALLOW_CATEGORIES = [
     ("notebook", "Notebook edit"),
     ("task", "Task/Todo tools"),
     ("bash_safe", "Bash (safe: npm, node, pip, ls)"),
+    ("bash_delete", "Bash (file deletion: rm, del, rmdir)"),
     ("bash_all", "Bash (all commands)"),
     ("git", "Git commands"),
 ]
@@ -129,13 +130,17 @@ BLOCK_PATTERNS = [
 ]
 
 # Templates (OFF, ALL*, ALL only - anything else is CUSTOM)
+# Note: all_safe keeps bash_delete OFF so you always verify deletions
 TEMPLATES = {
     "off": {
         "allow": {cat[0]: False for cat in ALLOW_CATEGORIES},
         "block": {pat[0]: True for pat in BLOCK_PATTERNS},
     },
     "all_safe": {
-        "allow": {cat[0]: True for cat in ALLOW_CATEGORIES},
+        "allow": {
+            **{cat[0]: True for cat in ALLOW_CATEGORIES},
+            "bash_delete": False,  # Always verify deletions in safe mode
+        },
         "block": {pat[0]: True for pat in BLOCK_PATTERNS},
     },
     "all": {

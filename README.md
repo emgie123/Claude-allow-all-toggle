@@ -34,6 +34,7 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 │  ☐ Notebook edit                        │
 │  ☑ Task/Todo tools                      │
 │  ☐ Bash (safe: npm, node, pip, ls)      │
+│  ☐ Bash (file deletion: rm, del, rmdir) │
 │  ☐ Bash (all commands)                  │
 │  ☐ Git commands                         │
 ├──────────────────────────────────────────┤
@@ -118,6 +119,22 @@ The hook always outputs explicit JSON responses to Claude Code:
 
 When `git=OFF`, git commands will **always** ask for permission, even if `bash_all=ON`. This ensures granular control over git operations.
 
+### File Deletion Override (bash_delete)
+
+When `bash_delete=OFF`, file deletion commands will **always** ask for permission, even if `bash_all=ON`. This lets you verify what's being deleted before it happens.
+
+**Detected deletion commands:**
+- `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`
+
+**Why this matters:** Even if you trust Claude with general bash commands, accidental deletions can be catastrophic. With `bash_delete=OFF`, you get a prompt showing exactly what files will be deleted before approving.
+
+**Template defaults:**
+| Template | bash_delete |
+|----------|-------------|
+| OFF | OFF |
+| ALL* | **OFF** (always verify deletions) |
+| ALL | ON |
+
 ### Chained Command Handling
 
 Claude often chains commands together (e.g., `cd /path && git push`). The hook properly handles these:
@@ -138,6 +155,14 @@ echo "test" && npm install
 
 # NOT safe (tasklist not in safe list):
 echo "test" && tasklist       # Falls through to bash_all check
+```
+
+**Delete detection:** Checks if ANY part is a deletion command:
+```bash
+# All detected as delete commands (when bash_delete=OFF):
+rm file.txt                   # Simple delete
+npm run build && rm -r dist   # Delete in chain
+ls -la; rm old.txt            # Delete after semicolon
 ```
 
 This prevents bypassing permissions by prefixing commands with safe operations.
@@ -183,7 +208,7 @@ Verify all patterns work correctly (without executing anything dangerous):
 python test_patterns.py
 ```
 
-This runs 53 test cases against the regex patterns to ensure destructive commands are blocked.
+This runs 84 test cases against the block patterns and delete detection to ensure destructive commands are blocked and file deletions are properly detected.
 
 ## Files
 

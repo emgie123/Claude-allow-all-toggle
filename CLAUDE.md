@@ -36,7 +36,7 @@ claude-permissions-hook.py (hook)
 | `AutoYesToggle.pyw` | Tkinter GUI with dark theme |
 | `claude-permissions-hook.py` | PreToolUse hook with pattern matching |
 | `claude-permissions-toggle.py` | Installer / uninstaller |
-| `test_patterns.py` | 53 test cases for pattern verification |
+| `test_patterns.py` | 84 test cases for pattern & delete detection |
 
 ## Installation
 
@@ -93,6 +93,7 @@ Collapse the full UI into a single ON/OFF toggle button:
     "notebook": false,
     "task": true,
     "bash_safe": false,
+    "bash_delete": false,
     "bash_all": false,
     "git": false
   },
@@ -144,6 +145,19 @@ The hook **must always** output a JSON response. No output = allow (Claude Code 
 
 When `git=OFF`, git commands always return `"ask"` even if `bash_all=ON`.
 This ensures granular control - you can allow all bash but still require approval for git.
+
+## File Deletion Override (bash_delete)
+
+When `bash_delete=OFF`, file deletion commands always return `"ask"` even if `bash_all=ON`.
+This lets you verify exactly what will be deleted before approving.
+
+**Detected commands:** `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`
+
+**Chained commands:** If ANY part of a chained command is a delete, it triggers the check:
+```bash
+npm build && rm -r dist   # Detected as delete
+ls -la; rm old.txt        # Detected as delete
+```
 
 ## Testing Patterns
 

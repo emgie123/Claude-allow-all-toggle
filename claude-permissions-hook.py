@@ -44,6 +44,21 @@ SAFE_BASH = [
     "env", "printenv", "set ",
 ]
 
+# File deletion command prefixes (single and batch)
+# When bash_delete is OFF, these commands will ASK for permission
+DELETE_COMMANDS = [
+    "rm ",       # Unix/Linux/Mac file delete
+    "rm\t",      # rm with tab
+    "del ",      # Windows file delete
+    "del\t",
+    "rmdir ",    # Remove directory (Unix)
+    "rd ",       # Remove directory (Windows)
+    "rd\t",
+    "erase ",    # Windows alias for del
+    "unlink ",   # Unix file delete
+    "shred ",    # Secure delete
+]
+
 # Block pattern detection functions
 BLOCK_PATTERNS = {
     "rm_rf": lambda cmd: bool(re.search(r'\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b', cmd, re.IGNORECASE)),
@@ -102,6 +117,23 @@ def is_safe_bash(cmd):
     return True  # All parts are safe
 
 
+def is_delete_command(cmd):
+    """Check if ANY part of a chained command is a file deletion command."""
+    # Split on && || ; | and check each part
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+        # Check if this part starts with a delete command
+        if any(part.startswith(prefix.lower()) for prefix in DELETE_COMMANDS):
+            return True
+        # Also catch "rm" at end of line (bare command)
+        if part == "rm" or part == "del" or part == "rd" or part == "rmdir":
+            return True
+    return False
+
+
 def check_blocks(cmd, config):
     """Check if command matches any enabled block pattern."""
     blocks = config.get("block", {})
@@ -114,7 +146,15 @@ def check_blocks(cmd, config):
 def check_permission(tool_name, tool_input, config):
     """
     Check if tool should be allowed.
-    Returns: "allow", ("block", reason), or None
+    Returns: "allow", ("block", reason), or None (ask)
+
+    Flow for bash commands:
+    1. BLOCK patterns → DENY
+    2. Git command? → Check git category (never falls through)
+    3. Safe bash? → Check bash_safe category
+    4. Delete command? → Check bash_delete category (never falls through)
+    5. bash_all enabled? → ALLOW
+    6. Otherwise → ASK
     """
     allow = config.get("allow", {})
     category = TOOL_CATEGORIES.get(tool_name)
@@ -147,7 +187,14 @@ def check_permission(tool_name, tool_input, config):
             return "allow"
         # Safe commands can still be allowed by bash_all
 
-    # Check bash_all (allows anything not blocked, except git when git=OFF)
+    # Check bash_delete - if OFF, require approval (don't fall through to bash_all)
+    # This lets user verify deletion is correct even when bash_all is enabled
+    if is_delete_command(cmd):
+        if allow.get("bash_delete", False):
+            return "allow"
+        return None  # Delete OFF = always ask, even if bash_all is ON
+
+    # Check bash_all (allows anything not blocked, except git/delete when those are OFF)
     if allow.get("bash_all", False):
         return "allow"
 

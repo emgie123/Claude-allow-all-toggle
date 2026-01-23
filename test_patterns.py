@@ -19,6 +19,34 @@ TOOL_CATEGORIES = {
     "Bash": "bash", "BashOutput": "bash", "KillShell": "bash",
 }
 
+# File deletion command prefixes (copied from hook)
+DELETE_COMMANDS = [
+    "rm ",       # Unix/Linux/Mac file delete
+    "rm\t",      # rm with tab
+    "del ",      # Windows file delete
+    "del\t",
+    "rmdir ",    # Remove directory (Unix)
+    "rd ",       # Remove directory (Windows)
+    "rd\t",
+    "erase ",    # Windows alias for del
+    "unlink ",   # Unix file delete
+    "shred ",    # Secure delete
+]
+
+
+def is_delete_command(cmd):
+    """Check if ANY part of a chained command is a file deletion command."""
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+        if any(part.startswith(prefix.lower()) for prefix in DELETE_COMMANDS):
+            return True
+        if part == "rm" or part == "del" or part == "rd" or part == "rmdir":
+            return True
+    return False
+
 BLOCK_PATTERNS = {
     "rm_rf": lambda cmd: bool(re.search(r'\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b', cmd, re.IGNORECASE)),
     "rm_rf_root": lambda cmd: bool(re.search(r'\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%', cmd, re.IGNORECASE)),
@@ -134,6 +162,48 @@ SAFE_TESTS = [
     ("Grep", "pattern", "Should allow Grep tool"),
 ]
 
+# Delete command detection tests: (command, should_detect_as_delete)
+DELETE_TESTS = [
+    # Simple delete commands - SHOULD be detected
+    ("rm file.txt", True),
+    ("rm -f file.txt", True),
+    ("rm -r directory", True),
+    ("rm -rf build", True),  # Also detected (plus blocked by rm_rf pattern)
+    ("rm *.log", True),
+    ("del file.txt", True),
+    ("del /q file.txt", True),
+    ("rmdir empty_dir", True),
+    ("rd /s /q folder", True),
+    ("erase temp.txt", True),
+    ("unlink symlink", True),
+    ("shred secret.txt", True),
+
+    # Chained commands with delete - SHOULD be detected
+    ("npm run build && rm -r dist", True),
+    ("ls -la; rm old.txt", True),
+    ("git pull && rm -rf node_modules && npm install", True),
+    ("echo 'done' | rm temp.log", True),  # Pipe chain
+
+    # Commands that are NOT delete - should NOT be detected
+    ("npm install", False),
+    ("node script.js", False),
+    ("python test.py", False),
+    ("ls -la", False),
+    ("mkdir new_folder", False),
+    ("cat file.txt", False),
+    ("grep -r pattern .", False),
+    ("git status", False),
+    ("git rm --cached file.txt", False),  # git rm is git, not rm
+    ("echo 'rm file.txt'", False),  # rm in quotes, not command
+    ("npm run remove-old", False),  # "remove" is not "rm "
+    ("firmware update", False),  # Contains "rm" but not as command
+
+    # Edge cases
+    ("  rm file.txt", True),  # Leading whitespace
+    ("RM FILE.TXT", True),  # Uppercase (case insensitive)
+    ("Del /F file.txt", True),  # Windows uppercase
+]
+
 
 def test_block_pattern(pattern_id, command, should_block):
     """Test if a pattern correctly blocks/allows a command."""
@@ -149,6 +219,16 @@ def test_block_pattern(pattern_id, command, should_block):
         return False, f"Expected {'BLOCK' if should_block else 'ALLOW'}, got {'BLOCK' if is_blocked else 'ALLOW'}"
 
 
+def test_delete_detection(command, should_detect):
+    """Test if a command is correctly detected as a delete command."""
+    is_delete = is_delete_command(command)
+
+    if is_delete == should_detect:
+        return True, None
+    else:
+        return False, f"Expected {'DELETE' if should_detect else 'NOT DELETE'}, got {'DELETE' if is_delete else 'NOT DELETE'}"
+
+
 def run_tests():
     print("=" * 60)
     print("CLAUDE PERMISSIONS HOOK - PATTERN TEST SUITE")
@@ -160,7 +240,7 @@ def run_tests():
 
     # Test destructive patterns
     print("-" * 60)
-    print("DESTRUCTIVE PATTERN TESTS")
+    print("DESTRUCTIVE PATTERN TESTS (BLOCK patterns)")
     print("-" * 60)
 
     current_pattern = None
@@ -182,14 +262,35 @@ def run_tests():
             print(f"  [{status}] {expected}: {command[:50]}")
             print(f"         ERROR: {error}")
 
+    # Test delete detection
+    print("\n" + "-" * 60)
+    print("DELETE COMMAND DETECTION TESTS (bash_delete category)")
+    print("-" * 60)
+    print("\nThese commands trigger ASK when bash_delete is OFF:\n")
+
+    for command, should_detect in DELETE_TESTS:
+        success, error = test_delete_detection(command, should_detect)
+
+        expected = "DELETE" if should_detect else "NOT DELETE"
+        status = "PASS" if success else "FAIL"
+
+        if success:
+            passed += 1
+            print(f"  [{status}] {expected}: {command[:50]}")
+        else:
+            failed += 1
+            print(f"  [{status}] {expected}: {command[:50]}")
+            print(f"         ERROR: {error}")
+
     # Summary
     print("\n" + "=" * 60)
     print(f"RESULTS: {passed} passed, {failed} failed")
     print("=" * 60)
 
     if failed == 0:
-        print("\n[OK] All block patterns working correctly!")
+        print("\n[OK] All patterns working correctly!")
         print("\nYour destructive command protection is ready.")
+        print("Delete commands will ASK when bash_delete is OFF.")
     else:
         print(f"\n[ERROR] {failed} tests failed - review the patterns above")
 
