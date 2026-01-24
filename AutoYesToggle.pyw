@@ -212,6 +212,10 @@ class PermissionsToggle:
         # Track if currently "on" (not off template)
         self.is_on = self.current_template != "off"
 
+        # Track Write/Edit state separately (only meaningful when Custom is ON)
+        # Check actual config state for write/edit
+        self.write_edit_on = self.config.get("write_edit_on", True)
+
         # If currently on, update last_active_template
         if self.is_on and self.current_template != "off":
             self.last_active_template = self.current_template
@@ -248,17 +252,13 @@ class PermissionsToggle:
         return default
 
     def save_config(self):
-        # Always save minimal_mode preference and last_active_template
+        # Always save minimal_mode preference, last_active_template, and write_edit_on
         self.config["minimal_mode"] = self.minimal_mode
         self.config["last_active_template"] = self.last_active_template
+        self.config["write_edit_on"] = self.write_edit_on
 
-        if not any(self.config["allow"].values()):
-            # When OFF, still save the file to preserve minimal_mode preference
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(self.config, f, indent=2)
-        else:
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(self.config, f, indent=2)
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.config, f, indent=2)
 
     def detect_template(self):
         for name, preset in TEMPLATES.items():
@@ -268,24 +268,24 @@ class PermissionsToggle:
         return "custom"
 
     def build_minimal_ui(self):
-        """Build the minimal single-toggle UI."""
+        """Build the minimal split-toggle UI: [Write/Edit] | [Custom]"""
         c = self.c
 
         self.root.title("Claude")
-        self.root.minsize(160, 50)
-        self.root.geometry("160x50")
+        self.root.minsize(240, 50)
+        self.root.geometry("240x50")
 
         # Position bottom-right
         self.root.update_idletasks()
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        self.root.geometry(f"+{screen_w - 180}+{screen_h - 120}")
+        self.root.geometry(f"+{screen_w - 260}+{screen_h - 120}")
 
         # Main frame
         main = tk.Frame(self.root, bg=c["bg"])
         main.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Single row: expand button + power toggle
+        # Single row: expand button + write/edit toggle + custom toggle
         row = tk.Frame(main, bg=c["bg"])
         row.pack(fill="x", expand=True)
 
@@ -297,7 +297,18 @@ class PermissionsToggle:
                               command=self.expand_ui)
         expand_btn.pack(side="left", padx=(0, 5))
 
-        # Power toggle button (main area)
+        # Write/Edit toggle button (left of main area)
+        self.write_edit_btn = tk.Button(row, text="W/E", font=("Segoe UI", 10, "bold"),
+                                        bd=0, relief="flat", cursor="hand2",
+                                        padx=10, pady=6,
+                                        command=self.toggle_write_edit)
+        self.write_edit_btn.pack(side="left", padx=(0, 3))
+
+        # Separator
+        sep = tk.Frame(row, bg=c["border"], width=2)
+        sep.pack(side="left", fill="y", padx=2, pady=4)
+
+        # Custom toggle button (main area)
         self.power_btn = tk.Button(row, text="", font=("Segoe UI", 11, "bold"),
                                    bd=0, relief="flat", cursor="hand2",
                                    padx=15, pady=6,
@@ -307,11 +318,11 @@ class PermissionsToggle:
         self.update_minimal_display()
 
     def update_minimal_display(self):
-        """Update the minimal UI display."""
+        """Update the minimal UI display with split buttons."""
         c = self.c
 
         if self.is_on:
-            # Show current mode name
+            # Show current mode name on Custom button
             mode_names = {"all_safe": "ALL*", "all": "ALL", "custom": "CUSTOM"}
             mode_colors = {"all_safe": c["green"], "all": c["red"], "custom": c["purple"]}
 
@@ -320,9 +331,24 @@ class PermissionsToggle:
             color = mode_colors.get(mode, c["green"])
 
             self.power_btn.config(text=label, bg=color, fg="white")
-            self.root.title(f"Claude: {label}")
+
+            # Write/Edit button - enabled and shows state
+            if self.write_edit_on:
+                self.write_edit_btn.config(text="W/E", bg=c["blue"], fg="white",
+                                          state="normal", cursor="hand2")
+            else:
+                self.write_edit_btn.config(text="W/E", bg=c["gray"], fg=c["text"],
+                                          state="normal", cursor="hand2")
+
+            # Title shows both states
+            we_status = "W/E" if self.write_edit_on else "R/O"
+            self.root.title(f"Claude: {we_status}|{label}")
         else:
+            # Custom is OFF - everything disabled
             self.power_btn.config(text="OFF", bg=c["gray"], fg=c["text"])
+            # Write/Edit greyed out and disabled when Custom is OFF
+            self.write_edit_btn.config(text="W/E", bg=c["card"], fg=c["muted"],
+                                      state="disabled", cursor="arrow")
             self.root.title("Claude: OFF")
 
     def toggle_power(self):
@@ -332,12 +358,36 @@ class PermissionsToggle:
             self.apply_template_silent("off")
             self.is_on = False
         else:
-            # Turn ON - restore last active template
+            # Turn ON - restore last active template with current write_edit state
             self.apply_template_silent(self.last_active_template)
+            self.apply_write_edit_state()
             self.is_on = True
 
         self.save_config()
         self.update_minimal_display()
+
+    def toggle_write_edit(self):
+        """Toggle Write/Edit permissions on/off (only when Custom is ON)."""
+        if not self.is_on:
+            return  # Can't toggle when Custom is OFF
+
+        self.write_edit_on = not self.write_edit_on
+        self.apply_write_edit_state()
+        self.save_config()
+        self.update_minimal_display()
+
+    def apply_write_edit_state(self):
+        """Apply the current write_edit_on state to config."""
+        if self.write_edit_on:
+            # Enable write, edit, notebook
+            self.config["allow"]["write"] = True
+            self.config["allow"]["edit"] = True
+            self.config["allow"]["notebook"] = True
+        else:
+            # Disable write, edit, notebook
+            self.config["allow"]["write"] = False
+            self.config["allow"]["edit"] = False
+            self.config["allow"]["notebook"] = False
 
     def apply_template_silent(self, name):
         """Apply a template without UI updates (for minimal mode)."""
@@ -352,6 +402,11 @@ class PermissionsToggle:
         """Switch to full UI mode."""
         self.minimal_mode = False
         self.config["minimal_mode"] = False
+
+        # Apply write_edit state to config before expanding
+        # This ensures the full UI checkboxes match minimal mode state
+        self.apply_write_edit_state()
+
         self.save_config()
 
         # Destroy current widgets and rebuild
@@ -485,6 +540,12 @@ class PermissionsToggle:
             self.is_on = True
         else:
             self.is_on = False
+
+        # Sync write_edit_on from current allow config
+        self.write_edit_on = (
+            self.config.get("allow", {}).get("write", False) and
+            self.config.get("allow", {}).get("edit", False)
+        )
 
         self.save_config()
 
@@ -656,6 +717,8 @@ class PermissionsToggle:
             preserved["minimal_mode"] = self.config["minimal_mode"]
         if "last_active_template" in self.config:
             preserved["last_active_template"] = self.config["last_active_template"]
+        # Preserve write_edit_on state
+        preserved["write_edit_on"] = self.write_edit_on
 
         if preserved:
             # Save only the preserved settings

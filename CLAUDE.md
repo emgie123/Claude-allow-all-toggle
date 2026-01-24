@@ -52,7 +52,7 @@ This will:
 
 ## Minimal Mode
 
-Collapse the full UI into a single ON/OFF toggle button:
+Collapse the full UI into a compact split-toggle view:
 
 **Full UI:**
 ```
@@ -65,17 +65,32 @@ Collapse the full UI into a single ON/OFF toggle button:
 └─────────────────────────────────────────┘
 ```
 
-**Minimal UI:**
+**Minimal UI (Split Button):**
 ```
-┌──────────────────────┐
-│ [...] [   ALL*    ] │ ← Single toggle, [...] expands
-└──────────────────────┘
+┌────────────────────────────────┐
+│ [...] [W/E] │ [   ALL*      ] │
+└────────────────────────────────┘
 ```
+
+**Split Button Controls:**
+| Button | Purpose |
+|--------|---------|
+| `W/E` | Toggle Write/Edit/NotebookEdit permissions (blue=ON, gray=OFF) |
+| `ALL*` etc. | Toggle all custom permissions ON/OFF |
+| `...` | Expand back to full UI |
+
+**States:**
+| Custom | W/E | Title Bar | Result |
+|--------|-----|-----------|--------|
+| OFF | (disabled) | `Claude: OFF` | Full minimal - ask for everything |
+| ON | OFF | `Claude: R/O\|ALL*` | Read-only - can read, search, bash, but NOT write/edit |
+| ON | ON | `Claude: W/E\|ALL*` | Full custom - everything including write/edit |
+
+**Use case:** Stay in read-only mode while exploring code, then flip W/E on when ready to make changes.
 
 - Click `_` in full UI to minimize
 - Click `...` in minimal UI to expand
-- Toggle remembers last active mode (ALL*, ALL, or CUSTOM)
-- Preference persists across restarts
+- Both states (Custom mode + W/E) persist across restarts
 
 ## Config File Format
 
@@ -84,6 +99,7 @@ Collapse the full UI into a single ON/OFF toggle button:
 {
   "minimal_mode": false,
   "last_active_template": "all_safe",
+  "write_edit_on": true,
   "allow": {
     "read": true,
     "write": true,
