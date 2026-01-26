@@ -260,6 +260,18 @@ class PermissionsToggle:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(self.config, f, indent=2)
 
+    def clear_active_config(self):
+        """Clear active permissions but preserve preferences (like X close does)."""
+        preserved = {}
+        if "saved_custom" in self.config:
+            preserved["saved_custom"] = self.config["saved_custom"]
+        preserved["minimal_mode"] = self.minimal_mode
+        preserved["last_active_template"] = self.last_active_template
+        preserved["write_edit_on"] = self.write_edit_on
+
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(preserved, f, indent=2)
+
     def detect_template(self):
         for name, preset in TEMPLATES.items():
             if (all(self.config.get("allow", {}).get(k, False) == v for k, v in preset["allow"].items()) and
@@ -297,10 +309,10 @@ class PermissionsToggle:
                               command=self.expand_ui)
         expand_btn.pack(side="left", padx=(0, 5))
 
-        # Write/Edit toggle button (left of main area)
-        self.write_edit_btn = tk.Button(row, text="W/E", font=("Segoe UI", 10, "bold"),
+        # Write/Edit toggle button (left of main area) - ✎ pencil symbol
+        self.write_edit_btn = tk.Button(row, text="✎", font=("Segoe UI", 14),
                                         bd=0, relief="flat", cursor="hand2",
-                                        padx=10, pady=6,
+                                        padx=8, pady=4,
                                         command=self.toggle_write_edit)
         self.write_edit_btn.pack(side="left", padx=(0, 3))
 
@@ -334,10 +346,10 @@ class PermissionsToggle:
 
             # Write/Edit button - enabled and shows state
             if self.write_edit_on:
-                self.write_edit_btn.config(text="W/E", bg=c["blue"], fg="white",
+                self.write_edit_btn.config(text="✎", bg=c["blue"], fg="white",
                                           state="normal", cursor="hand2")
             else:
-                self.write_edit_btn.config(text="W/E", bg=c["gray"], fg=c["text"],
+                self.write_edit_btn.config(text="✎", bg=c["gray"], fg=c["text"],
                                           state="normal", cursor="hand2")
 
             # Title shows both states
@@ -347,23 +359,26 @@ class PermissionsToggle:
             # Custom is OFF - everything disabled
             self.power_btn.config(text="OFF", bg=c["gray"], fg=c["text"])
             # Write/Edit greyed out and disabled when Custom is OFF
-            self.write_edit_btn.config(text="W/E", bg=c["card"], fg=c["muted"],
+            self.write_edit_btn.config(text="✎", bg=c["card"], fg=c["muted"],
                                       state="disabled", cursor="arrow")
             self.root.title("Claude: OFF")
 
     def toggle_power(self):
         """Toggle between ON (last active mode) and OFF."""
         if self.is_on:
-            # Turn OFF
-            self.apply_template_silent("off")
+            # Turn OFF - unregister hook, Claude returns to native behavior
+            unregister_hook()
             self.is_on = False
+            # Clear active permissions but preserve preferences
+            self.clear_active_config()
         else:
-            # Turn ON - restore last active template with current write_edit state
+            # Turn ON - register hook and restore last active template
+            register_hook()
             self.apply_template_silent(self.last_active_template)
             self.apply_write_edit_state()
             self.is_on = True
+            self.save_config()
 
-        self.save_config()
         self.update_minimal_display()
 
     def toggle_write_edit(self):
@@ -608,10 +623,15 @@ class PermissionsToggle:
         if name != "off":
             self.last_active_template = name
             self.is_on = True
+            # Re-register hook if turning back on
+            register_hook()
+            self.save_config()
         else:
+            # OFF = unregister hook, Claude returns to native behavior
             self.is_on = False
+            unregister_hook()
+            self.clear_active_config()
 
-        self.save_config()
         self.update_display()
         # Reset save button (templates auto-save)
         self.save_btn.config(bg=self.c["card"], fg=self.c["muted"], text="Save")

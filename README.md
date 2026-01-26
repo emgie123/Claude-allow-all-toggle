@@ -61,28 +61,28 @@ Click the `_` button to collapse into a compact split-toggle view:
 
 ```
 ┌────────────────────────────────┐
-│ [...] [W/E] │ [   ALL*      ] │
+│ [...] [✎] │ [   ALL*      ] │
 └────────────────────────────────┘
 ```
 
 **Split Button Controls:**
 | Button | What it does |
 |--------|--------------|
-| `W/E` | Toggle Write/Edit permissions (blue=ON, gray=OFF) |
+| `✎` | Toggle Write/Edit permissions (blue=ON, gray=OFF) |
 | `ALL*` / `CUSTOM` / etc. | Toggle all custom permissions ON/OFF |
 | `...` | Expand back to full UI |
 
 **States:**
-| Custom | W/E | Title Bar | Result |
-|--------|-----|-----------|--------|
-| OFF | (disabled) | `Claude: OFF` | Full minimal - ask for everything |
+| Custom | ✎ | Title Bar | Result |
+|--------|---|-----------|--------|
+| OFF | (disabled) | `Claude: OFF` | Hook unregistered - Claude uses native behavior |
 | ON | OFF | `Claude: R/O\|ALL*` | Read-only - can read, search, bash, but NOT write/edit |
 | ON | ON | `Claude: W/E\|ALL*` | Full custom - everything including write/edit |
 
-**Use case:** Stay in read-only mode while exploring, then flip W/E on when ready to make changes.
+**Use case:** Stay in read-only mode while exploring, then flip ✎ on when ready to make changes.
 
 - Remembers both states across restarts
-- W/E controls: Write, Edit, NotebookEdit
+- ✎ controls: Write, Edit, NotebookEdit
 
 ## Installation
 
@@ -105,11 +105,13 @@ Then double-click `AutoYesToggle.pyw` to launch. That's it!
 | Event | What Happens |
 |-------|--------------|
 | **App opens** | Registers hook in `~/.claude/settings.json` |
+| **Toggle OFF** | Unregisters hook, Claude reverts to native behavior |
+| **Toggle ON** | Re-registers hook, permissions applied |
 | **App closes** | Unregisters hook, Claude reverts to native behavior |
 
-When the app is closed, there's **zero overhead** - no hook runs, no Python spawns. Claude Code uses its built-in permission logic.
+When the app is closed **or toggled OFF**, there's **zero overhead** - no hook runs, no Python spawns. Claude Code uses its built-in permission logic.
 
-Your saved custom template and preferences (minimal mode, last template) persist across restarts.
+Your saved custom template and preferences (minimal mode, last template, ✎ state) persist across restarts.
 
 ### Two-Layer Permission System
 
