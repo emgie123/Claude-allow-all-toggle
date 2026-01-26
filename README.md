@@ -120,6 +120,26 @@ Your saved custom template and preferences (minimal mode, last template, ✎ sta
 
 **Example:** You can allow "Git commands" but still block "git push --force".
 
+### Tool Categories
+
+Each checkbox controls one or more Claude Code tools:
+
+| Category | Claude Tools |
+|----------|--------------|
+| Read files | `Read` |
+| Write files | `Write` |
+| Edit files | `Edit` |
+| Search | `Glob`, `Grep` |
+| Web access | `WebFetch`, `WebSearch` |
+| Notebook edit | `NotebookEdit` |
+| Task/Todo tools | `Task`, `TodoWrite` (legacy), `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` (v2.1.16+) |
+| Bash (safe) | Safe commands: npm, node, python, pip, ls, cd, echo, curl, etc. |
+| Bash (delete) | `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred` |
+| Bash (all) | `Bash`, `BashOutput`, `KillShell` |
+| Git | Any command containing `git` |
+
+**Note:** Task tools were updated in Claude Code v2.0.59-2.1.16. This hook supports both legacy (`TodoWrite`) and new (`TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`) versions.
+
 ### Hook Response Format
 
 The hook always outputs explicit JSON responses to Claude Code:

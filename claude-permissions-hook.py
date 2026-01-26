@@ -27,8 +27,14 @@ TOOL_CATEGORIES = {
     "WebFetch": "web",
     "WebSearch": "web",
     "NotebookEdit": "notebook",
+    # Task tools (old + new)
     "Task": "task",
-    "TodoWrite": "task",
+    "TodoWrite": "task",      # Legacy (pre-2.0.59)
+    "TaskCreate": "task",     # New (2.1.16+)
+    "TaskUpdate": "task",     # New (2.0.59+)
+    "TaskList": "task",       # New (2.1.16+)
+    "TaskGet": "task",        # New (2.1.16+)
+    # Bash tools
     "Bash": "bash",
     "BashOutput": "bash",
     "KillShell": "bash",
