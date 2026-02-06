@@ -35,13 +35,13 @@ claude-permissions-hook.py (hook)
 |------|---------|
 | `AutoYesToggle.pyw` | Tkinter GUI with dark theme |
 | `claude-permissions-hook.py` | PreToolUse hook with pattern matching |
-| `claude-permissions-toggle.py` | Installer / uninstaller |
+| `install.py` | Installer / uninstaller |
 | `test_patterns.py` | 84 test cases for pattern & delete detection |
 
 ## Installation
 
 ```bash
-python claude-permissions-toggle.py
+python install.py
 ```
 
 This will:
@@ -185,6 +185,6 @@ python test_patterns.py
 ## Uninstall
 
 ```bash
-python claude-permissions-toggle.py --uninstall        # Keep project folder
-python claude-permissions-toggle.py --uninstall --full # Remove everything
+python install.py --uninstall        # Keep project folder
+python install.py --uninstall --full # Remove everything
 ```

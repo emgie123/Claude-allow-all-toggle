@@ -253,7 +253,7 @@ This runs 84 test cases against the block patterns and delete detection to ensur
 |------|---------|
 | `AutoYesToggle.pyw` | Dark-themed GUI toggle |
 | `claude-permissions-hook.py` | Hook logic with pattern matching |
-| `claude-permissions-toggle.py` | Installer / uninstaller |
+| `install.py` | Installer / uninstaller |
 | `test_patterns.py` | Pattern verification test suite |
 
 ## Config Location
@@ -268,8 +268,8 @@ Since the hook auto-unregisters when the app closes, simply closing the app is e
 
 To fully remove:
 ```bash
-python claude-permissions-toggle.py --uninstall       # Removes config files
-python claude-permissions-toggle.py --uninstall --full  # Also removes project folder
+python install.py --uninstall       # Removes config files
+python install.py --uninstall --full  # Also removes project folder
 ```
 
 ## Requirements
