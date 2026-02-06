@@ -68,20 +68,20 @@ Collapse the full UI into a compact split-toggle view:
 **Minimal UI (Split Button):**
 ```
 ┌────────────────────────────────┐
-│ [...] [W/E] │ [   ALL*      ] │
+│ [...] [✎] │ [   ALL*      ] │
 └────────────────────────────────┘
 ```
 
 **Split Button Controls:**
 | Button | Purpose |
 |--------|---------|
-| `W/E` | Toggle Write/Edit/NotebookEdit permissions (blue=ON, gray=OFF) |
+| `✎` | Toggle Write/Edit/NotebookEdit permissions (blue=ON, gray=OFF) |
 | `ALL*` etc. | Toggle all custom permissions ON/OFF |
 | `...` | Expand back to full UI |
 
 **States:**
-| Custom | W/E | Title Bar | Result |
-|--------|-----|-----------|--------|
+| Custom | ✎ | Title Bar | Result |
+|--------|---|-----------|--------|
 | OFF | (disabled) | `Claude: OFF` | Full minimal - ask for everything |
 | ON | OFF | `Claude: R/O\|ALL*` | Read-only - can read, search, bash, but NOT write/edit |
 | ON | ON | `Claude: W/E\|ALL*` | Full custom - everything including write/edit |

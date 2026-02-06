@@ -34,6 +34,8 @@ TOOL_CATEGORIES = {
     "TaskUpdate": "task",     # New (2.0.59+)
     "TaskList": "task",       # New (2.1.16+)
     "TaskGet": "task",        # New (2.1.16+)
+    "TaskStop": "task",       # Stop background tasks
+    "TaskOutput": "task",     # Read background task output
     # Bash tools
     "Bash": "bash",
     "BashOutput": "bash",
