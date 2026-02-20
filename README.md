@@ -272,6 +272,38 @@ python install.py --uninstall       # Removes config files
 python install.py --uninstall --full  # Also removes project folder
 ```
 
+## Troubleshooting
+
+### Hooks failing after Claude Code update ("hook error" on every tool)
+
+**Symptom:** Every tool call shows a hook error or prompts for permission even though the toggle is ON. Claude Code logs may show `command not found` or `Hook output does not start with {`.
+
+**Cause:** Claude Code runs hook commands via Git Bash on Windows. If your hook was registered with raw Windows backslash paths (e.g. `C:\Users\...\python.exe`), Bash mangles them and the hook process fails before producing any JSON output. Claude Code then falls back to its default permission behavior (prompting for everything).
+
+**Fix:**
+
+1. **Update the repo:** `git pull` to get the latest version (commit `69a1e5f` and later)
+2. **Re-register the hook:** Either:
+   - Close and reopen `AutoYesToggle.pyw`, OR
+   - Run `python install.py`
+3. **Restart Claude Code** (hooks are snapshot at session startup)
+
+**Verify:** Check `~/.claude/settings.json` — the hook command should use **quoted forward-slash paths**:
+```json
+"command": "\"C:/Users/.../python.exe\" \"C:/Users/.../claude-permissions-hook.py\""
+```
+
+Not backslash paths like `C:\\Users\\...\\python.exe`.
+
+**What changed:**
+- Hook commands now use quoted forward-slash paths compatible with both cmd.exe and Git Bash
+- `pythonw.exe` is replaced with `python.exe` (the GUI subsystem executable can't reliably pipe stdout when spawned by Claude Code)
+- Hook JSON responses include explicit `continue` and `suppressOutput` fields for latest Claude Code compatibility
+
+### Hook shows "error" label but permissions work fine
+
+This is a [known Claude Code bug](https://github.com/anthropics/claude-code/issues/17088) (cosmetic only). If your permissions are actually being applied correctly, the "error" label can be ignored.
+
 ## Requirements
 
 - Windows 10/11
