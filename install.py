@@ -17,8 +17,18 @@ import argparse
 
 
 def get_python_path():
-    """Get the full path to the Python executable."""
-    return sys.executable
+    """Get the full path to the Python executable.
+    Always use python.exe (not pythonw.exe) because hooks need stdout piping."""
+    exe = sys.executable
+    # pythonw.exe can't reliably pipe stdout when spawned by Claude Code
+    if exe.lower().endswith("pythonw.exe"):
+        exe = exe[:-len("pythonw.exe")] + "python.exe"
+    return exe
+
+
+def to_hook_path(path):
+    """Format a path for shell-safe hook commands on Windows."""
+    return os.path.abspath(path).replace("\\", "/")
 
 
 def get_paths():
@@ -81,7 +91,7 @@ def install():
             settings = {}
 
     # Build hook command with full Python path - point to SOURCE file so updates work immediately
-    hook_command = f"{paths['python_exe']} {paths['hook_py_src']}"
+    hook_command = f"\"{to_hook_path(paths['python_exe'])}\" \"{to_hook_path(paths['hook_py_src'])}\""
 
     hook_entry = {
         "matcher": "*",

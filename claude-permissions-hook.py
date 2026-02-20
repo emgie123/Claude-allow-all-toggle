@@ -212,6 +212,8 @@ def check_permission(tool_name, tool_input, config):
 def ask_permission(reason="Requires user approval"):
     """Output JSON to ask for user permission."""
     print(json.dumps({
+        "continue": True,
+        "suppressOutput": False,
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "ask",
@@ -244,6 +246,8 @@ def main():
 
     if result == "allow":
         print(json.dumps({
+            "continue": True,
+            "suppressOutput": False,
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
@@ -252,6 +256,8 @@ def main():
         }))
     elif isinstance(result, tuple) and result[0] == "block":
         print(json.dumps({
+            "continue": True,
+            "suppressOutput": False,
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
@@ -261,6 +267,8 @@ def main():
     else:
         # Explicitly ask for permission (no output doesn't work)
         print(json.dumps({
+            "continue": True,
+            "suppressOutput": False,
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "ask",

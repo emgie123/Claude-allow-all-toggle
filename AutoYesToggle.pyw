@@ -19,8 +19,24 @@ HOOK_PY_SRC = os.path.join(SCRIPT_DIR, "claude-permissions-hook.py")
 
 
 def get_python_path():
-    """Get the full path to the Python executable."""
-    return sys.executable
+    """Get the full path to the Python executable.
+    Always use python.exe (not pythonw.exe) because hooks need stdout piping."""
+    exe = sys.executable
+    if exe.lower().endswith("pythonw.exe"):
+        exe = exe[:-len("pythonw.exe")] + "python.exe"
+    return exe
+
+
+def to_hook_path(path):
+    """Format a path for shell-safe hook commands on Windows."""
+    return os.path.abspath(path).replace("\\", "/")
+
+
+def build_hook_command():
+    """Build a hook command that works under Windows Git Bash."""
+    python_exe = to_hook_path(get_python_path())
+    hook_script = to_hook_path(HOOK_PY_SRC)
+    return f"\"{python_exe}\" \"{hook_script}\""
 
 
 def register_hook():
@@ -35,7 +51,7 @@ def register_hook():
             settings = {}
 
     # Build hook command
-    hook_command = f"{get_python_path()} {HOOK_PY_SRC}"
+    hook_command = build_hook_command()
 
     hook_entry = {
         "matcher": "*",
