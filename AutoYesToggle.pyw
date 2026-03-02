@@ -8,14 +8,17 @@ When app closes: unregisters hook (Claude uses default behavior)
 """
 import tkinter as tk
 from tkinter import ttk
+import atexit
 import os
 import sys
 import json
+import msvcrt
 
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), '.claude-permissions.json')
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HOOK_PY_SRC = os.path.join(SCRIPT_DIR, "claude-permissions-hook.py")
+LOCK_FILE = os.path.join(os.path.expanduser("~"), '.claude-permissions.lock')
 
 
 def get_python_path():
@@ -39,79 +42,90 @@ def build_hook_command():
     return f"\"{python_exe}\" \"{hook_script}\""
 
 
+def atomic_write_json(path, payload):
+    """Write JSON atomically to avoid partial reads by the hook process."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    temp_path = f"{path}.tmp"
+
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_path, path)
+
+
+def _is_toggle_hook(entry):
+    hooks = entry.get("hooks", [])
+    for hook in hooks:
+        command = hook.get("command", "")
+        if any(marker in command for marker in [
+            "auto-yes-hook.cmd",
+            "claude-permissions-hook.cmd",
+            "claude-permissions-hook.py",
+        ]):
+            return True
+    return False
+
+
 def register_hook():
     """Register the permissions hook in Claude's settings.json."""
-    # Load existing settings or create new
     settings = {}
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r') as f:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 settings = json.load(f)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError):
             settings = {}
-
-    # Build hook command
-    hook_command = build_hook_command()
 
     hook_entry = {
         "matcher": "*",
         "hooks": [{
             "type": "command",
-            "command": hook_command
-        }]
+            "command": build_hook_command(),
+        }],
     }
 
-    if "hooks" not in settings:
-        settings["hooks"] = {}
-    if "PreToolUse" not in settings["hooks"]:
-        settings["hooks"]["PreToolUse"] = []
+    hooks = settings.setdefault("hooks", {})
+    pretool_hooks = hooks.setdefault("PreToolUse", [])
+    hooks["PreToolUse"] = [entry for entry in pretool_hooks if not _is_toggle_hook(entry)]
+    hooks["PreToolUse"].append(hook_entry)
 
-    # Remove old hooks if present, then add new one
-    settings["hooks"]["PreToolUse"] = [
-        h for h in settings["hooks"]["PreToolUse"]
-        if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
-            "auto-yes-hook.cmd",
-            "claude-permissions-hook.cmd",
-            "claude-permissions-hook.py"
-        ])
-    ]
-    settings["hooks"]["PreToolUse"].append(hook_entry)
-
-    # Write settings
-    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    with open(SETTINGS_FILE, 'w') as f:
-        json.dump(settings, f, indent=2)
+    atomic_write_json(SETTINGS_FILE, settings)
 
 
 def unregister_hook():
     """Unregister the permissions hook from Claude's settings.json."""
     if not os.path.exists(SETTINGS_FILE):
-        return
+        return True
 
     try:
-        with open(SETTINGS_FILE, 'r') as f:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             settings = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
 
-        if "hooks" in settings and "PreToolUse" in settings["hooks"]:
-            settings["hooks"]["PreToolUse"] = [
-                h for h in settings["hooks"]["PreToolUse"]
-                if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
-                    "auto-yes-hook.cmd",
-                    "claude-permissions-hook.cmd",
-                    "claude-permissions-hook.py"
-                ])
-            ]
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return True
 
-            # Clean up empty structures
-            if not settings["hooks"]["PreToolUse"]:
-                del settings["hooks"]["PreToolUse"]
-            if not settings["hooks"]:
-                del settings["hooks"]
+    pretool_hooks = hooks.get("PreToolUse")
+    if not isinstance(pretool_hooks, list):
+        return True
 
-            with open(SETTINGS_FILE, 'w') as f:
-                json.dump(settings, f, indent=2)
-    except Exception:
-        pass  # Fail silently on close
+    hooks["PreToolUse"] = [entry for entry in pretool_hooks if not _is_toggle_hook(entry)]
+
+    if not hooks["PreToolUse"]:
+        del hooks["PreToolUse"]
+    if not hooks:
+        del settings["hooks"]
+
+    try:
+        atomic_write_json(SETTINGS_FILE, settings)
+        return True
+    except OSError:
+        return False
 
 # Allow categories
 ALLOW_CATEGORIES = [
@@ -169,9 +183,13 @@ TEMPLATES = {
 class PermissionsToggle:
     def __init__(self):
         self.root = tk.Tk()
+        self._cleaned_up = False
+        self.lock_handle = None
+        self.acquire_runtime_lock()
 
         # Register hook on startup
         register_hook()
+        atexit.register(self.cleanup_state)
 
         # Dark theme colors
         self.c = {
@@ -223,18 +241,16 @@ class PermissionsToggle:
 
         # Load minimal mode preference and last active template
         self.minimal_mode = self.config.get("minimal_mode", False)
-        self.last_active_template = self.config.get("last_active_template", "all_safe")
-
-        # Track if currently "on" (not off template)
-        self.is_on = self.current_template != "off"
+        self.last_active_template = self.config.get("last_active_template", "custom")
 
         # Track Write/Edit state separately (only meaningful when Custom is ON)
-        # Check actual config state for write/edit
         self.write_edit_on = self.config.get("write_edit_on", True)
 
-        # If currently on, update last_active_template
-        if self.is_on and self.current_template != "off":
-            self.last_active_template = self.current_template
+        # Auto-apply last active template on startup (config is cleared on close)
+        self.apply_template_silent(self.last_active_template)
+        self.apply_write_edit_state()
+        self.is_on = True
+        self.save_config()
 
         # Build appropriate UI
         if self.minimal_mode:
@@ -273,8 +289,7 @@ class PermissionsToggle:
         self.config["last_active_template"] = self.last_active_template
         self.config["write_edit_on"] = self.write_edit_on
 
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        atomic_write_json(CONFIG_FILE, self.config)
 
     def clear_active_config(self):
         """Clear active permissions but preserve preferences (like X close does)."""
@@ -285,8 +300,7 @@ class PermissionsToggle:
         preserved["last_active_template"] = self.last_active_template
         preserved["write_edit_on"] = self.write_edit_on
 
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(preserved, f, indent=2)
+        atomic_write_json(CONFIG_FILE, preserved)
 
     def detect_template(self):
         for name, preset in TEMPLATES.items():
@@ -422,7 +436,18 @@ class PermissionsToggle:
 
     def apply_template_silent(self, name):
         """Apply a template without UI updates (for minimal mode)."""
-        preset = TEMPLATES.get(name, TEMPLATES["all_safe"])
+        if name == "custom":
+            saved = self.config.get("saved_custom")
+            if saved:
+                for cat_id, value in saved.get("allow", {}).items():
+                    self.config["allow"][cat_id] = value
+                for pat_id, value in saved.get("block", {}).items():
+                    self.config["block"][pat_id] = value
+                self.current_template = "custom"
+                return
+            # No saved custom — fall back to all_safe
+            name = "all_safe"
+        preset = TEMPLATES[name]
         for cat_id, value in preset["allow"].items():
             self.config["allow"][cat_id] = value
         for pat_id, value in preset["block"].items():
@@ -741,11 +766,57 @@ class PermissionsToggle:
         else:
             self.info_label.config(text="")
 
-    def on_close(self):
-        # Unregister hook - Claude reverts to default behavior
+    def acquire_runtime_lock(self):
+        """Hold an exclusive lock while the toggle process is alive."""
+        self.lock_handle = open(LOCK_FILE, "a+b")
+        self.lock_handle.seek(0, os.SEEK_END)
+        if self.lock_handle.tell() == 0:
+            self.lock_handle.write(b"1")
+            self.lock_handle.flush()
+        self.lock_handle.seek(0)
+
+        try:
+            msvcrt.locking(self.lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            try:
+                self.lock_handle.close()
+            except OSError:
+                pass
+            self.lock_handle = None
+            self.root.destroy()
+            raise SystemExit("Claude Permissions Toggle is already running")
+
+    def release_runtime_lock(self):
+        if self.lock_handle is None:
+            return
+
+        try:
+            self.lock_handle.seek(0)
+            msvcrt.locking(self.lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+
+        try:
+            self.lock_handle.close()
+        except OSError:
+            pass
+
+        self.lock_handle = None
+
+        try:
+            if os.path.exists(LOCK_FILE):
+                os.remove(LOCK_FILE)
+        except OSError:
+            pass
+
+    def cleanup_state(self):
+        if self._cleaned_up:
+            return
+
+        self._cleaned_up = True
+
         unregister_hook()
 
-        # Preserve saved_custom and preferences, but clear active permissions
         preserved = {}
         if "saved_custom" in self.config:
             preserved["saved_custom"] = self.config["saved_custom"]
@@ -753,21 +824,27 @@ class PermissionsToggle:
             preserved["minimal_mode"] = self.config["minimal_mode"]
         if "last_active_template" in self.config:
             preserved["last_active_template"] = self.config["last_active_template"]
-        # Preserve write_edit_on state
         preserved["write_edit_on"] = self.write_edit_on
 
         if preserved:
-            # Save only the preserved settings
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(preserved, f, indent=2)
+            atomic_write_json(CONFIG_FILE, preserved)
         elif os.path.exists(CONFIG_FILE):
-            # No preserved settings, delete the file
-            os.remove(CONFIG_FILE)
+            try:
+                os.remove(CONFIG_FILE)
+            except OSError:
+                pass
 
+        self.release_runtime_lock()
+
+    def on_close(self):
+        self.cleanup_state()
         self.root.destroy()
 
     def run(self):
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            self.cleanup_state()
 
 
 if __name__ == "__main__":

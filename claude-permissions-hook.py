@@ -8,14 +8,30 @@ Logic:
 2. Check if tool/command matches an ALLOW category -> ALLOW
 3. Otherwise -> ASK (explicit permission request)
 
-Note: Must always output JSON response. No output = allow (Claude Code behavior).
+Safety behavior:
+- If toggle app is not running, this hook cleans stale state and asks.
+- This prevents orphaned "allow all" config after crashes/forced termination.
 """
-import sys
-import os
 import json
+import os
 import re
+import sys
+import msvcrt
 
-CONFIG_FILE = os.path.join(os.path.expanduser("~"), '.claude-permissions.json')
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".claude-permissions.json")
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+LOCK_FILE = os.path.join(os.path.expanduser("~"), ".claude-permissions.lock")
+HOOK_MARKERS = [
+    "auto-yes-hook.cmd",
+    "claude-permissions-hook.cmd",
+    "claude-permissions-hook.py",
+]
+PRESERVED_CONFIG_KEYS = [
+    "saved_custom",
+    "minimal_mode",
+    "last_active_template",
+    "write_edit_on",
+]
 
 # Tool name -> category mapping
 TOOL_CATEGORIES = {
@@ -56,12 +72,12 @@ SAFE_BASH = [
 # When bash_delete is OFF, these commands will ASK for permission
 DELETE_COMMANDS = [
     "rm ",       # Unix/Linux/Mac file delete
-    "rm\t",      # rm with tab
+    "rm	",      # rm with tab
     "del ",      # Windows file delete
-    "del\t",
+    "del	",
     "rmdir ",    # Remove directory (Unix)
     "rd ",       # Remove directory (Windows)
-    "rd\t",
+    "rd	",
     "erase ",    # Windows alias for del
     "unlink ",   # Unix file delete
     "shred ",    # Secure delete
@@ -69,37 +85,157 @@ DELETE_COMMANDS = [
 
 # Block pattern detection functions
 BLOCK_PATTERNS = {
-    "rm_rf": lambda cmd: bool(re.search(r'\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b', cmd, re.IGNORECASE)),
-    "rm_rf_root": lambda cmd: bool(re.search(r'\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%', cmd, re.IGNORECASE)),
+    "rm_rf": lambda cmd: bool(re.search(r"\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b", cmd, re.IGNORECASE)),
+    "rm_rf_root": lambda cmd: bool(re.search(r"\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%", cmd, re.IGNORECASE)),
     "git_reset_hard": lambda cmd: "git reset --hard" in cmd or "git reset --merge" in cmd,
-    "git_checkout_discard": lambda cmd: bool(re.search(r'git\s+checkout\s+--\s+', cmd)),
-    "git_clean": lambda cmd: bool(re.search(r'git\s+clean\s+-[^\s]*f', cmd)),
-    "git_push_force": lambda cmd: bool(re.search(r'git\s+push\s+.*--force|git\s+push\s+-f\b', cmd)),
-    "git_branch_delete": lambda cmd: bool(re.search(r'git\s+branch\s+-D\b', cmd)),
+    "git_checkout_discard": lambda cmd: bool(re.search(r"git\s+checkout\s+--\s+", cmd)),
+    "git_clean": lambda cmd: bool(re.search(r"git\s+clean\s+-[^\s]*f", cmd)),
+    "git_push_force": lambda cmd: bool(re.search(r"git\s+push\s+.*--force|git\s+push\s+-f\b", cmd)),
+    "git_branch_delete": lambda cmd: bool(re.search(r"git\s+branch\s+-D\b", cmd)),
     "git_stash_drop": lambda cmd: "git stash drop" in cmd or "git stash clear" in cmd,
-    "find_delete": lambda cmd: bool(re.search(r'find\s+.*-delete', cmd)),
-    "xargs_rm": lambda cmd: bool(re.search(r'xargs\s+.*rm|parallel\s+.*rm', cmd)),
+    "find_delete": lambda cmd: bool(re.search(r"find\s+.*-delete", cmd)),
+    "xargs_rm": lambda cmd: bool(re.search(r"xargs\s+.*rm|parallel\s+.*rm", cmd)),
     "dd_if": lambda cmd: cmd.strip().startswith("dd ") and "if=" in cmd,
     "mkfs": lambda cmd: cmd.strip().startswith("mkfs"),
-    "chmod_777": lambda cmd: bool(re.search(r'chmod\s+.*-R\s+777\s+/', cmd)),
+    "chmod_777": lambda cmd: bool(re.search(r"chmod\s+.*-R\s+777\s+/", cmd)),
 }
+
+
+def atomic_write_json(path, payload):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    temp_path = f"{path}.tmp"
+
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_path, path)
+
+
+def load_json(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def load_config():
     """Load config from file, return None if not found."""
-    if not os.path.exists(CONFIG_FILE):
-        return None
+    return load_json(CONFIG_FILE)
+
+
+def is_toggle_hook(entry):
+    hooks = entry.get("hooks", [])
+    for hook in hooks:
+        command = hook.get("command", "")
+        if any(marker in command for marker in HOOK_MARKERS):
+            return True
+    return False
+
+
+def unregister_hook_if_present():
+    settings = load_json(SETTINGS_FILE)
+    if not isinstance(settings, dict):
+        return
+
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+
+    pretool_hooks = hooks.get("PreToolUse")
+    if not isinstance(pretool_hooks, list):
+        return
+
+    filtered = [entry for entry in pretool_hooks if not is_toggle_hook(entry)]
+    if len(filtered) == len(pretool_hooks):
+        return
+
+    if filtered:
+        hooks["PreToolUse"] = filtered
+    else:
+        hooks.pop("PreToolUse", None)
+
+    if not hooks:
+        settings.pop("hooks", None)
+
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return None
+        atomic_write_json(SETTINGS_FILE, settings)
+    except OSError:
+        # If we cannot unregister here, default ask behavior still keeps it safe.
+        pass
+
+
+def is_toggle_running():
+    """Detect whether the toggle UI process currently holds the runtime lock."""
+    if not os.path.exists(LOCK_FILE):
+        return False
+
+    try:
+        with open(LOCK_FILE, "a+b") as lock_handle:
+            lock_handle.seek(0, os.SEEK_END)
+            if lock_handle.tell() == 0:
+                lock_handle.write(b"1")
+                lock_handle.flush()
+            lock_handle.seek(0)
+
+            try:
+                msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return True
+            else:
+                msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+                return False
+    except OSError:
+        return False
+
+
+def has_active_permissions(config):
+    if not isinstance(config, dict):
+        return False
+    return isinstance(config.get("allow"), dict) or isinstance(config.get("block"), dict)
+
+
+def clear_active_permissions(config):
+    preserved = {}
+    if isinstance(config, dict):
+        for key in PRESERVED_CONFIG_KEYS:
+            if key in config:
+                preserved[key] = config[key]
+
+    if preserved:
+        try:
+            atomic_write_json(CONFIG_FILE, preserved)
+        except OSError:
+            pass
+    elif os.path.exists(CONFIG_FILE):
+        try:
+            os.remove(CONFIG_FILE)
+        except OSError:
+            pass
+
+
+def cleanup_stale_state(config):
+    if has_active_permissions(config):
+        clear_active_permissions(config)
+
+    if os.path.exists(LOCK_FILE):
+        try:
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass
+
+    unregister_hook_if_present()
 
 
 def is_git_command(cmd):
     """Check if command contains a git command (handles chained commands)."""
     # Split on && || ; | and check each part
-    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    parts = re.split(r"\s*(?:&&|\|\||[;|])\s*", cmd)
     for part in parts:
         part = part.strip()
         if part.startswith("git ") or part.startswith("git.exe "):
@@ -113,7 +249,7 @@ def is_git_command(cmd):
 def is_safe_bash(cmd):
     """Check if ALL parts of a chained command are safe."""
     # Split on && || ; | and check each part
-    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    parts = re.split(r"\s*(?:&&|\|\||[;|])\s*", cmd)
     for part in parts:
         part = part.strip().lower()
         if not part:
@@ -128,7 +264,7 @@ def is_safe_bash(cmd):
 def is_delete_command(cmd):
     """Check if ANY part of a chained command is a file deletion command."""
     # Split on && || ; | and check each part
-    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    parts = re.split(r"\s*(?:&&|\|\||[;|])\s*", cmd)
     for part in parts:
         part = part.strip().lower()
         if not part:
@@ -157,12 +293,12 @@ def check_permission(tool_name, tool_input, config):
     Returns: "allow", ("block", reason), or None (ask)
 
     Flow for bash commands:
-    1. BLOCK patterns → DENY
-    2. Git command? → Check git category (never falls through)
-    3. Safe bash? → Check bash_safe category
-    4. Delete command? → Check bash_delete category (never falls through)
-    5. bash_all enabled? → ALLOW
-    6. Otherwise → ASK
+    1. BLOCK patterns -> DENY
+    2. Git command? -> Check git category (never falls through)
+    3. Safe bash? -> Check bash_safe category
+    4. Delete command? -> Check bash_delete category (never falls through)
+    5. bash_all enabled? -> ALLOW
+    6. Otherwise -> ASK
     """
     allow = config.get("allow", {})
     category = TOOL_CATEGORIES.get(tool_name)
@@ -223,8 +359,13 @@ def ask_permission(reason="Requires user approval"):
 
 
 def main():
-    # Load config
     config = load_config()
+
+    if not is_toggle_running():
+        cleanup_stale_state(config)
+        ask_permission("Permissions toggle not running; reverted to default prompts")
+        return
+
     if config is None:
         # No config = OFF mode, ask for everything
         ask_permission("Permissions toggle: OFF mode")
@@ -233,7 +374,7 @@ def main():
     # Read tool info from stdin
     try:
         input_data = json.loads(sys.stdin.read())
-    except:
+    except Exception:
         ask_permission("Permissions toggle: Could not read input")
         return
 
