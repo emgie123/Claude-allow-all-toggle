@@ -34,18 +34,25 @@ PRESERVED_CONFIG_KEYS = [
 ]
 
 # Tool name -> category mapping
+# Keep in sync with Claude Code's current tool names.
 TOOL_CATEGORIES = {
     "Read": "read",
     "Write": "write",
     "Edit": "edit",
     "Glob": "search",
     "Grep": "search",
+    "LSP": "search",
+    "MCPSearch": "search",
     "WebFetch": "web",
     "WebSearch": "web",
     "NotebookEdit": "notebook",
-    # Task tools (old + new)
-    "Task": "task",
+    # Agent/task tools (old + new)
+    "Agent": "task",          # Launches a sub-agent
+    "Task": "task",           # Legacy alias
     "TodoWrite": "task",      # Legacy (pre-2.0.59)
+    "AskUserQuestion": "task",
+    "ExitPlanMode": "task",
+    "Skill": "task",
     "TaskCreate": "task",     # New (2.1.16+)
     "TaskUpdate": "task",     # New (2.0.59+)
     "TaskList": "task",       # New (2.1.16+)

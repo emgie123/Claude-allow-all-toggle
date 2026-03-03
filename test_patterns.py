@@ -12,10 +12,12 @@ import re
 
 TOOL_CATEGORIES = {
     "Read": "read", "Write": "write", "Edit": "edit",
-    "Glob": "search", "Grep": "search",
+    "Glob": "search", "Grep": "search", "LSP": "search", "MCPSearch": "search",
     "WebFetch": "web", "WebSearch": "web",
     "NotebookEdit": "notebook",
-    "Task": "task", "TodoWrite": "task",
+    "Agent": "task", "Task": "task", "TodoWrite": "task",
+    "AskUserQuestion": "task", "ExitPlanMode": "task", "Skill": "task",
+    "TaskCreate": "task", "TaskUpdate": "task", "TaskList": "task", "TaskGet": "task", "TaskOutput": "task",
     "Bash": "bash", "BashOutput": "bash", "KillShell": "bash",
 }
 

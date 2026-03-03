@@ -129,16 +129,16 @@ Each checkbox controls one or more Claude Code tools:
 | Read files | `Read` |
 | Write files | `Write` |
 | Edit files | `Edit` |
-| Search | `Glob`, `Grep` |
+| Search | `Glob`, `Grep`, `LSP`, `MCPSearch` |
 | Web access | `WebFetch`, `WebSearch` |
 | Notebook edit | `NotebookEdit` |
-| Task/Todo tools | `Task`, `TodoWrite` (legacy), `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` (v2.1.16+) |
+| Task/Todo tools | `Agent`, `Task`, `TodoWrite` (legacy), `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput` |
 | Bash (safe) | Safe commands: npm, node, python, pip, ls, cd, echo, curl, etc. |
 | Bash (delete) | `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred` |
 | Bash (all) | `Bash`, `BashOutput`, `KillShell` |
 | Git | Any command containing `git` |
 
-**Note:** Task tools were updated in Claude Code v2.0.59-2.1.16. This hook supports both legacy (`TodoWrite`) and new (`TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`) versions.
+**Note:** Claude Code tool names evolve over time. This hook supports legacy names (`TodoWrite`, `Task`) and current names (`Agent`, `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput`).
 
 ### Hook Response Format
 
