@@ -98,6 +98,20 @@ Then double-click `AutoYesToggle.pyw` to launch. That's it!
 - **Auto-updates:** After `git pull`, changes take effect immediately
 - If you have multiple Python installations, the app uses whichever `python` runs it
 
+### Pin to Taskbar (Optional)
+
+Use `create_shortcut.ps1` to create a desktop shortcut, then pin it to the taskbar for one-click access:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File create_shortcut.ps1
+```
+
+1. Right-click the new **Claude Permissions** shortcut on your desktop
+2. Select **Pin to taskbar**
+3. Delete the desktop shortcut (the taskbar pin persists independently)
+
+Now you can launch the toggle directly from the taskbar without a desktop shortcut.
+
 ## How It Works
 
 ### App Lifecycle
