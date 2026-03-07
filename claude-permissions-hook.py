@@ -43,6 +43,7 @@ TOOL_CATEGORIES = {
     "Grep": "search",
     "LSP": "search",
     "MCPSearch": "search",
+    "ToolSearch": "search",
     "WebFetch": "web",
     "WebSearch": "web",
     "NotebookEdit": "notebook",

@@ -132,7 +132,7 @@ ALLOW_CATEGORIES = [
     ("read", "Read files"),
     ("write", "Write files"),
     ("edit", "Edit files"),
-    ("search", "Search (Glob/Grep)"),
+    ("search", "Search (Glob/Grep/ToolSearch)"),
     ("web", "Web access"),
     ("notebook", "Notebook edit"),
     ("task", "Task/Todo tools"),

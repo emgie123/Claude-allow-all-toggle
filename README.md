@@ -29,7 +29,7 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 │  ☑ Read files                           │
 │  ☑ Write files                          │
 │  ☑ Edit files                           │
-│  ☑ Search (Glob/Grep)                   │
+│  ☑ Search (Glob/Grep/ToolSearch)         │
 │  ☐ Web access                           │
 │  ☐ Notebook edit                        │
 │  ☑ Task/Todo tools                      │
@@ -143,7 +143,7 @@ Each checkbox controls one or more Claude Code tools:
 | Read files | `Read` |
 | Write files | `Write` |
 | Edit files | `Edit` |
-| Search | `Glob`, `Grep`, `LSP`, `MCPSearch` |
+| Search | `Glob`, `Grep`, `LSP`, `MCPSearch`, `ToolSearch` |
 | Web access | `WebFetch`, `WebSearch` |
 | Notebook edit | `NotebookEdit` |
 | Task/Todo tools | `Agent`, `Task`, `TodoWrite` (legacy), `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput` |
