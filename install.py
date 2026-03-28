@@ -15,6 +15,13 @@ import json
 import shutil
 import argparse
 
+HOOK_MARKERS = [
+    "auto-yes-hook.cmd",
+    "claude-permissions-hook.cmd",
+    "claude-permissions-hook.py",
+]
+MANAGED_ALLOW_RULES_KEY = "managed_allow_rules"
+
 
 def get_python_path():
     """Get the full path to the Python executable.
@@ -52,6 +59,65 @@ def get_paths():
         "old_flag": os.path.join(home, ".claude-auto-yes"),
         "old_permissions_cmd": os.path.join(home, "claude-permissions-hook.cmd"),
     }
+
+
+def remove_toggle_hooks(settings):
+    """Remove hook entries owned by this project from all relevant hook events."""
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+
+    for event_name in ("PreToolUse", "PermissionRequest"):
+        event_hooks = hooks.get(event_name)
+        if not isinstance(event_hooks, list):
+            continue
+
+        hooks[event_name] = [
+            h for h in event_hooks
+            if not any(
+                marker in hook.get("command", "")
+                for hook in h.get("hooks", [])
+                for marker in HOOK_MARKERS
+            )
+        ]
+
+        if not hooks[event_name]:
+            del hooks[event_name]
+
+    if not hooks:
+        del settings["hooks"]
+
+
+def load_managed_allow_rules(config_path):
+    """Load transient permissions.allow rules managed by the toggle."""
+    if not os.path.exists(config_path):
+        return []
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    managed_rules = config.get(MANAGED_ALLOW_RULES_KEY, [])
+    return managed_rules if isinstance(managed_rules, list) else []
+
+
+def remove_managed_allow_rules(settings, managed_rules):
+    """Remove transient permissions.allow rules managed by the toggle."""
+    if not isinstance(managed_rules, list) or not managed_rules:
+        return
+
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return
+
+    allow_rules = permissions.get("allow")
+    if not isinstance(allow_rules, list):
+        return
+
+    remaining_rules = [rule for rule in allow_rules if rule not in set(managed_rules)]
+    permissions["allow"] = remaining_rules
 
 
 def install():
@@ -103,19 +169,21 @@ def install():
 
     if "hooks" not in settings:
         settings["hooks"] = {}
-    if "PreToolUse" not in settings["hooks"]:
-        settings["hooks"]["PreToolUse"] = []
 
-    # Remove old hooks if present
-    settings["hooks"]["PreToolUse"] = [
-        h for h in settings["hooks"]["PreToolUse"]
-        if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
-            "auto-yes-hook.cmd",
-            "claude-permissions-hook.cmd",
-            "claude-permissions-hook.py"
-        ])
-    ]
-    settings["hooks"]["PreToolUse"].append(hook_entry)
+    for event_name in ("PreToolUse", "PermissionRequest"):
+        if event_name not in settings["hooks"]:
+            settings["hooks"][event_name] = []
+
+        # Remove old hooks if present
+        settings["hooks"][event_name] = [
+            h for h in settings["hooks"][event_name]
+            if not any(
+                marker in hook.get("command", "")
+                for hook in h.get("hooks", [])
+                for marker in HOOK_MARKERS
+            )
+        ]
+        settings["hooks"][event_name].append(hook_entry)
 
     # Write settings
     os.makedirs(os.path.dirname(paths["settings_file"]), exist_ok=True)
@@ -155,7 +223,7 @@ def install():
     print()
     print("  3. Or check individual boxes and click Save")
     print()
-    print("Changes take effect immediately - no restart needed!")
+    print("If Claude Code is already open, restart it or review the change in /hooks once.")
     print()
     print("NOTE: Hook runs directly from repo folder.")
     print("      Git pull updates take effect immediately!")
@@ -167,6 +235,7 @@ def install():
 def uninstall(full=False):
     """Uninstall the hook and toggle."""
     paths = get_paths()
+    managed_rules = load_managed_allow_rules(paths["config_file"])
 
     print("Uninstalling Claude Permissions Toggle...")
     print()
@@ -190,26 +259,13 @@ def uninstall(full=False):
             with open(paths["settings_file"], 'r') as f:
                 settings = json.load(f)
 
-            if "hooks" in settings and "PreToolUse" in settings["hooks"]:
-                settings["hooks"]["PreToolUse"] = [
-                    h for h in settings["hooks"]["PreToolUse"]
-                    if not any(x in h.get("hooks", [{}])[0].get("command", "") for x in [
-                        "auto-yes-hook.cmd",
-                        "claude-permissions-hook.cmd",
-                        "claude-permissions-hook.py"
-                    ])
-                ]
+            remove_toggle_hooks(settings)
+            remove_managed_allow_rules(settings, managed_rules)
 
-                # Clean up empty structures
-                if not settings["hooks"]["PreToolUse"]:
-                    del settings["hooks"]["PreToolUse"]
-                if not settings["hooks"]:
-                    del settings["hooks"]
+            with open(paths["settings_file"], 'w') as f:
+                json.dump(settings, f, indent=2)
 
-                with open(paths["settings_file"], 'w') as f:
-                    json.dump(settings, f, indent=2)
-
-                print("Removed hook from Claude settings")
+            print("Removed hook from Claude settings")
         except Exception as e:
             print(f"Error updating settings: {e}")
 

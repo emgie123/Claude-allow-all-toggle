@@ -26,11 +26,18 @@ HOOK_MARKERS = [
     "claude-permissions-hook.cmd",
     "claude-permissions-hook.py",
 ]
+MANAGED_ALLOW_RULES_KEY = "managed_allow_rules"
+MANAGED_ALLOW_RULES = {
+    "write": "Write",
+    "edit": "Edit",
+    "notebook": "NotebookEdit",
+}
 PRESERVED_CONFIG_KEYS = [
     "saved_custom",
     "minimal_mode",
     "last_active_template",
     "write_edit_on",
+    MANAGED_ALLOW_RULES_KEY,
 ]
 
 # Tool name -> category mapping
@@ -137,6 +144,53 @@ def load_config():
     return load_json(CONFIG_FILE)
 
 
+def sync_managed_permission_rules(config, toggle_enabled):
+    """Remove or add transient Write/Edit allow rules managed by the toggle."""
+    settings = load_json(SETTINGS_FILE)
+    if not isinstance(settings, dict):
+        settings = {}
+
+    permissions = settings.setdefault("permissions", {})
+    allow_rules = permissions.get("allow")
+    if not isinstance(allow_rules, list):
+        allow_rules = []
+
+    managed_rules = set()
+    if isinstance(config, dict):
+        managed_rules = set(config.get(MANAGED_ALLOW_RULES_KEY, []))
+
+    desired_rules = set()
+    if toggle_enabled and isinstance(config, dict):
+        allow_config = config.get("allow", {})
+        for category, rule in MANAGED_ALLOW_RULES.items():
+            if allow_config.get(category, False):
+                desired_rules.add(rule)
+
+    removed_rules = managed_rules - desired_rules
+    if removed_rules:
+        allow_rules = [rule for rule in allow_rules if rule not in removed_rules]
+        managed_rules -= removed_rules
+
+    allow_set = set(allow_rules)
+    for rule in sorted(desired_rules):
+        if rule not in allow_set:
+            allow_rules.append(rule)
+            allow_set.add(rule)
+            managed_rules.add(rule)
+
+    permissions["allow"] = allow_rules
+    if isinstance(config, dict):
+        if managed_rules:
+            config[MANAGED_ALLOW_RULES_KEY] = sorted(managed_rules)
+        else:
+            config.pop(MANAGED_ALLOW_RULES_KEY, None)
+
+    try:
+        atomic_write_json(SETTINGS_FILE, settings)
+    except OSError:
+        pass
+
+
 def is_toggle_hook(entry):
     hooks = entry.get("hooks", [])
     for hook in hooks:
@@ -155,18 +209,23 @@ def unregister_hook_if_present():
     if not isinstance(hooks, dict):
         return
 
-    pretool_hooks = hooks.get("PreToolUse")
-    if not isinstance(pretool_hooks, list):
-        return
+    removed_any = False
 
-    filtered = [entry for entry in pretool_hooks if not is_toggle_hook(entry)]
-    if len(filtered) == len(pretool_hooks):
-        return
+    for event_name in ("PreToolUse", "PermissionRequest"):
+        event_hooks = hooks.get(event_name)
+        if not isinstance(event_hooks, list):
+            continue
 
-    if filtered:
-        hooks["PreToolUse"] = filtered
-    else:
-        hooks.pop("PreToolUse", None)
+        filtered = [entry for entry in event_hooks if not is_toggle_hook(entry)]
+        removed_any = removed_any or len(filtered) != len(event_hooks)
+
+        if filtered:
+            hooks[event_name] = filtered
+        else:
+            hooks.pop(event_name, None)
+
+    if not removed_any:
+        return
 
     if not hooks:
         settings.pop("hooks", None)
@@ -198,6 +257,10 @@ def is_toggle_running():
             else:
                 msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
                 return False
+    except PermissionError:
+        # On Windows, opening a file that another process holds without sharing
+        # can fail before we even reach msvcrt.locking. Treat that as "running".
+        return True
     except OSError:
         return False
 
@@ -228,6 +291,8 @@ def clear_active_permissions(config):
 
 
 def cleanup_stale_state(config):
+    sync_managed_permission_rules(config, False)
+
     if has_active_permissions(config):
         clear_active_permissions(config)
 
@@ -366,24 +431,51 @@ def ask_permission(reason="Requires user approval"):
     }))
 
 
+def handle_permission_request(result):
+    """Answer the native Claude permission dialog when it appears."""
+    if result == "allow":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow"
+                }
+            }
+        }))
+    elif isinstance(result, tuple) and result[0] == "block":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "deny",
+                    "message": f"Blocked by toggle: {result[1]} pattern"
+                }
+            }
+        }))
+    # For anything else, emit no decision so Claude shows its normal prompt.
+
+
 def main():
-    config = load_config()
-
-    if not is_toggle_running():
-        cleanup_stale_state(config)
-        ask_permission("Permissions toggle not running; reverted to default prompts")
-        return
-
-    if config is None:
-        # No config = OFF mode, ask for everything
-        ask_permission("Permissions toggle: OFF mode")
-        return
-
     # Read tool info from stdin
     try:
         input_data = json.loads(sys.stdin.read())
     except Exception:
         ask_permission("Permissions toggle: Could not read input")
+        return
+
+    hook_event_name = input_data.get("hook_event_name", "PreToolUse")
+    config = load_config()
+
+    if not is_toggle_running():
+        cleanup_stale_state(config)
+        if hook_event_name == "PreToolUse":
+            ask_permission("Permissions toggle not running; reverted to default prompts")
+        return
+
+    if config is None:
+        # No config = OFF mode, ask for everything / keep Claude's native prompt.
+        if hook_event_name == "PreToolUse":
+            ask_permission("Permissions toggle: OFF mode")
         return
 
     # Note: Claude Code uses snake_case (tool_name, tool_input)
@@ -392,6 +484,10 @@ def main():
 
     # Check permission
     result = check_permission(tool_name, tool_input, config)
+
+    if hook_event_name == "PermissionRequest":
+        handle_permission_request(result)
+        return
 
     if result == "allow":
         print(json.dumps({

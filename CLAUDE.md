@@ -7,11 +7,17 @@ Instructions for AI agents working with this project.
 A GUI toggle for controlling Claude Code tool permissions with:
 - **ALLOW categories** - Which tool types to auto-approve
 - **BLOCK patterns** - Specific destructive commands to always deny
-- **Hot-loading** - Changes take effect immediately
+- **Fast W/E mode** - Write/Edit/NotebookEdit can run without the prompt flash
+- **Hot toggles** - Category changes take effect immediately while hooks are already loaded
 - **Custom templates** - Save and recall custom configurations
 - **Minimal mode** - Collapse to single ON/OFF toggle
 
 ## Architecture
+
+The GUI owns two pieces of state:
+
+- `~/.claude-permissions.json` for saved templates and live toggle state
+- `~/.claude/settings.json` for hook registration plus transient `permissions.allow` entries while W/E is ON
 
 ```
 AutoYesToggle.pyw (GUI)
@@ -34,7 +40,7 @@ claude-permissions-hook.py (hook)
 | File | Purpose |
 |------|---------|
 | `AutoYesToggle.pyw` | Tkinter GUI with dark theme |
-| `claude-permissions-hook.py` | PreToolUse hook with pattern matching |
+| `claude-permissions-hook.py` | Dual hook handler for `PreToolUse` and `PermissionRequest` |
 | `install.py` | Installer / uninstaller |
 | `test_patterns.py` | 84 test cases for pattern & delete detection |
 
@@ -45,10 +51,11 @@ python install.py
 ```
 
 This will:
-1. Register hook in `~/.claude/settings.json` (points to repo source)
+1. Register `PreToolUse` and `PermissionRequest` hooks in `~/.claude/settings.json` (points to repo source)
 2. Clean up any old hook files
 
 **Auto-updates:** Hook runs directly from repo folder - `git pull` updates take effect immediately.
+If Claude Code is already open, restart it once or review the hook change in `/hooks`.
 
 ## Minimal Mode
 
@@ -100,6 +107,7 @@ Collapse the full UI into a compact split-toggle view:
   "minimal_mode": false,
   "last_active_template": "all_safe",
   "write_edit_on": true,
+  "managed_allow_rules": ["Edit", "NotebookEdit", "Write"],
   "allow": {
     "read": true,
     "write": true,
@@ -123,11 +131,14 @@ Collapse the full UI into a compact split-toggle view:
 }
 ```
 
+`managed_allow_rules` tracks which `permissions.allow` entries were added by the toggle so they can be removed cleanly when W/E is turned off or the app exits.
+
 ## Hook Input Format
 
 Claude Code sends JSON via stdin with snake_case keys:
 ```json
 {
+  "hook_event_name": "PreToolUse|PermissionRequest",
   "tool_name": "Read",
   "tool_input": {"file_path": "..."},
   "session_id": "...",
@@ -135,14 +146,16 @@ Claude Code sends JSON via stdin with snake_case keys:
 }
 ```
 
-**Important:** Use `tool_name` and `tool_input` (not camelCase).
+**Important:** Use `tool_name` and `tool_input` (not camelCase). The same hook script now receives both `PreToolUse` and `PermissionRequest` events.
 
 ## Hook Output Format
 
-The hook **must always** output a JSON response. No output = allow (Claude Code behavior).
+`PreToolUse` should always return an explicit JSON decision:
 
 ```json
 {
+  "continue": true,
+  "suppressOutput": false,
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow|deny|ask",
@@ -156,6 +169,25 @@ The hook **must always** output a JSON response. No output = allow (Claude Code 
 | `"allow"` | Auto-approve, no user prompt |
 | `"deny"` | Auto-block, tool won't run |
 | `"ask"` | Prompt user for permission |
+
+`PermissionRequest` uses a different payload:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PermissionRequest",
+    "decision": {
+      "behavior": "allow|deny"
+    }
+  }
+}
+```
+
+If no `PermissionRequest` decision is emitted, Claude shows its normal prompt.
+
+## Write/Edit Fast Path
+
+When W/E is ON, the GUI temporarily adds `Write`, `Edit`, and `NotebookEdit` to `permissions.allow` in `~/.claude/settings.json`. That avoids the prompt flash on recent Claude Code builds. Those managed rules must be removed again when W/E is OFF or the app closes.
 
 ## Git Override Behavior
 

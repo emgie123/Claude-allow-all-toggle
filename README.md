@@ -9,7 +9,8 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 
 - **Zero overhead when closed** - Hook auto-unregisters on close, Claude uses native behavior
 - **Auto-registers on open** - No installer needed, just launch the app
-- **Hot-loading** - Changes take effect immediately, no restart needed
+- **Fast W/E mode** - Write/Edit/NotebookEdit can run without the permission dialog flash
+- **Hot toggles** - Category changes take effect immediately while the hook is already loaded
 - **Two-layer system** - ALLOW categories + BLOCK specific patterns
 - **13 destructive patterns** blocked by default (rm -rf, git reset --hard, etc.)
 - **Save custom templates** - Settings persist across app restarts
@@ -97,6 +98,7 @@ Then double-click `AutoYesToggle.pyw` to launch. That's it!
 - **No installer needed** - The app registers the hook automatically when opened
 - **Auto-updates:** After `git pull`, changes take effect immediately
 - If you have multiple Python installations, the app uses whichever `python` runs it
+- If Claude Code was already open before the hook was registered, restart Claude Code once or review the change in `/hooks`
 
 ### Pin to Taskbar (Optional)
 
@@ -118,14 +120,23 @@ Now you can launch the toggle directly from the taskbar without a desktop shortc
 
 | Event | What Happens |
 |-------|--------------|
-| **App opens** | Registers hook in `~/.claude/settings.json` |
-| **Toggle OFF** | Unregisters hook, Claude reverts to native behavior |
-| **Toggle ON** | Re-registers hook, permissions applied |
-| **App closes** | Unregisters hook, Claude reverts to native behavior |
+| **App opens** | Registers `PreToolUse` + `PermissionRequest` hooks in `~/.claude/settings.json` |
+| **W/E ON** | Temporarily adds `Write`, `Edit`, `NotebookEdit` to `permissions.allow` for a no-flash edit flow |
+| **Toggle OFF** | Unregisters hooks, removes managed W/E allow rules, Claude reverts to native behavior |
+| **App closes** | Unregisters hooks, removes managed W/E allow rules, Claude reverts to native behavior |
 
 When the app is closed **or toggled OFF**, there's **zero overhead** - no hook runs, no Python spawns. Claude Code uses its built-in permission logic.
 
 Your saved custom template and preferences (minimal mode, last template, ✎ state) persist across restarts.
+
+### Why Write/Edit Is Different
+
+Recent Claude Code builds can surface native file-permission UI through `PermissionRequest`, even when `PreToolUse` is already installed. To keep Write/Edit/NotebookEdit fast when W/E is ON, the toggle temporarily manages both:
+
+- Hook decisions for `PreToolUse` and `PermissionRequest`
+- Matching `permissions.allow` entries for `Write`, `Edit`, and `NotebookEdit`
+
+Those allow rules are only managed while the toggle is active. Turning W/E OFF or closing the app removes the rules it added, so Claude goes back to its normal prompts.
 
 ### Two-Layer Permission System
 
@@ -156,15 +167,36 @@ Each checkbox controls one or more Claude Code tools:
 
 ### Hook Response Format
 
-The hook always outputs explicit JSON responses to Claude Code:
+The toggle handles two Claude Code hook events:
 
-| Response | Meaning |
-|----------|---------|
-| `"permissionDecision": "allow"` | Auto-approve the tool |
-| `"permissionDecision": "deny"` | Auto-block the tool |
-| `"permissionDecision": "ask"` | Prompt user for permission |
+**`PreToolUse` response**
 
-**Note:** Claude Code treats no output as "allow", so the hook must always respond.
+```json
+{
+  "continue": true,
+  "suppressOutput": false,
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow|deny|ask",
+    "permissionDecisionReason": "Reason string"
+  }
+}
+```
+
+**`PermissionRequest` response**
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PermissionRequest",
+    "decision": {
+      "behavior": "allow|deny"
+    }
+  }
+}
+```
+
+If the hook emits no `PermissionRequest` decision, Claude shows its normal permission dialog.
 
 ### Git Commands Override
 
@@ -266,15 +298,18 @@ This runs 84 test cases against the block patterns and delete detection to ensur
 | File | Purpose |
 |------|---------|
 | `AutoYesToggle.pyw` | Dark-themed GUI toggle |
-| `claude-permissions-hook.py` | Hook logic with pattern matching |
+| `claude-permissions-hook.py` | Dual hook logic with pattern matching |
 | `install.py` | Installer / uninstaller |
 | `test_patterns.py` | Pattern verification test suite |
 
 ## Config Location
 
-`~/.claude-permissions.json` - Stores your saved custom template and preferences.
+Two files matter:
 
-When the app closes, active permissions are cleared but your saved template persists.
+- `~/.claude-permissions.json` - Saved template, minimal mode, last template, write/edit state, and transient rule ownership
+- `~/.claude/settings.json` - Registered hooks and temporary `permissions.allow` entries while W/E is ON
+
+When the app closes, active permissions are cleared, managed allow rules are removed, and your saved template persists.
 
 ## Uninstall
 
@@ -296,7 +331,7 @@ python install.py --uninstall --full  # Also removes project folder
 
 **Fix:**
 
-1. **Update the repo:** `git pull` to get the latest version (commit `69a1e5f` and later)
+1. **Update the repo:** `git pull` to get the latest version
 2. **Re-register the hook:** Either:
    - Close and reopen `AutoYesToggle.pyw`, OR
    - Run `python install.py`
@@ -313,6 +348,26 @@ Not backslash paths like `C:\\Users\\...\\python.exe`.
 - Hook commands now use quoted forward-slash paths compatible with both cmd.exe and Git Bash
 - `pythonw.exe` is replaced with `python.exe` (the GUI subsystem executable can't reliably pipe stdout when spawned by Claude Code)
 - Hook JSON responses include explicit `continue` and `suppressOutput` fields for latest Claude Code compatibility
+
+### Write/Edit still asks for permission or flashes briefly
+
+**Symptom:** Write/Edit works, but Claude briefly shows the native prompt or still asks every time.
+
+**Fix:**
+
+1. Close and reopen `AutoYesToggle.pyw` so the latest hook code is the running process
+2. Start a new Claude Code session, or review/reload the hook in `/hooks`
+3. Check `~/.claude/settings.json` and confirm both hook events are present:
+   - `hooks.PreToolUse`
+   - `hooks.PermissionRequest`
+4. While W/E is ON, confirm `permissions.allow` includes:
+   - `Write`
+   - `Edit`
+   - `NotebookEdit`
+
+**Expected behavior:**
+- W/E ON: write/edit tools should run without the prompt flash
+- W/E OFF: Claude should return to its normal permission prompt
 
 ### Hook shows "error" label but permissions work fine
 

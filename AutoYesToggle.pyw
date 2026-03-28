@@ -19,6 +19,12 @@ SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "settings.json"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HOOK_PY_SRC = os.path.join(SCRIPT_DIR, "claude-permissions-hook.py")
 LOCK_FILE = os.path.join(os.path.expanduser("~"), '.claude-permissions.lock')
+MANAGED_ALLOW_RULES_KEY = "managed_allow_rules"
+MANAGED_ALLOW_RULES = {
+    "write": "Write",
+    "edit": "Edit",
+    "notebook": "NotebookEdit",
+}
 
 
 def get_python_path():
@@ -56,6 +62,50 @@ def atomic_write_json(path, payload):
     os.replace(temp_path, path)
 
 
+def sync_managed_permission_rules(config, toggle_enabled):
+    """Sync transient Write/Edit allow rules for the current toggle state."""
+    settings = {}
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            settings = {}
+
+    permissions = settings.setdefault("permissions", {})
+    allow_rules = permissions.get("allow")
+    if not isinstance(allow_rules, list):
+        allow_rules = []
+
+    managed_rules = set(config.get(MANAGED_ALLOW_RULES_KEY, []))
+    desired_rules = set()
+    if toggle_enabled:
+        allow_config = config.get("allow", {})
+        for category, rule in MANAGED_ALLOW_RULES.items():
+            if allow_config.get(category, False):
+                desired_rules.add(rule)
+
+    removed_rules = managed_rules - desired_rules
+    if removed_rules:
+        allow_rules = [rule for rule in allow_rules if rule not in removed_rules]
+        managed_rules -= removed_rules
+
+    allow_set = set(allow_rules)
+    for rule in sorted(desired_rules):
+        if rule not in allow_set:
+            allow_rules.append(rule)
+            allow_set.add(rule)
+            managed_rules.add(rule)
+
+    permissions["allow"] = allow_rules
+    if managed_rules:
+        config[MANAGED_ALLOW_RULES_KEY] = sorted(managed_rules)
+    else:
+        config.pop(MANAGED_ALLOW_RULES_KEY, None)
+
+    atomic_write_json(SETTINGS_FILE, settings)
+
+
 def _is_toggle_hook(entry):
     hooks = entry.get("hooks", [])
     for hook in hooks:
@@ -88,9 +138,10 @@ def register_hook():
     }
 
     hooks = settings.setdefault("hooks", {})
-    pretool_hooks = hooks.setdefault("PreToolUse", [])
-    hooks["PreToolUse"] = [entry for entry in pretool_hooks if not _is_toggle_hook(entry)]
-    hooks["PreToolUse"].append(hook_entry)
+    for event_name in ("PreToolUse", "PermissionRequest"):
+        event_hooks = hooks.setdefault(event_name, [])
+        hooks[event_name] = [entry for entry in event_hooks if not _is_toggle_hook(entry)]
+        hooks[event_name].append(hook_entry)
 
     atomic_write_json(SETTINGS_FILE, settings)
 
@@ -110,14 +161,24 @@ def unregister_hook():
     if not isinstance(hooks, dict):
         return True
 
-    pretool_hooks = hooks.get("PreToolUse")
-    if not isinstance(pretool_hooks, list):
+    removed_any = False
+
+    for event_name in ("PreToolUse", "PermissionRequest"):
+        event_hooks = hooks.get(event_name)
+        if not isinstance(event_hooks, list):
+            continue
+
+        filtered = [entry for entry in event_hooks if not _is_toggle_hook(entry)]
+        removed_any = removed_any or len(filtered) != len(event_hooks)
+
+        if filtered:
+            hooks[event_name] = filtered
+        else:
+            del hooks[event_name]
+
+    if not removed_any:
         return True
 
-    hooks["PreToolUse"] = [entry for entry in pretool_hooks if not _is_toggle_hook(entry)]
-
-    if not hooks["PreToolUse"]:
-        del hooks["PreToolUse"]
     if not hooks:
         del settings["hooks"]
 
@@ -289,16 +350,21 @@ class PermissionsToggle:
         self.config["last_active_template"] = self.last_active_template
         self.config["write_edit_on"] = self.write_edit_on
 
+        sync_managed_permission_rules(self.config, self.is_on)
         atomic_write_json(CONFIG_FILE, self.config)
 
     def clear_active_config(self):
         """Clear active permissions but preserve preferences (like X close does)."""
+        sync_managed_permission_rules(self.config, False)
+
         preserved = {}
         if "saved_custom" in self.config:
             preserved["saved_custom"] = self.config["saved_custom"]
         preserved["minimal_mode"] = self.minimal_mode
         preserved["last_active_template"] = self.last_active_template
         preserved["write_edit_on"] = self.write_edit_on
+        if MANAGED_ALLOW_RULES_KEY in self.config:
+            preserved[MANAGED_ALLOW_RULES_KEY] = self.config[MANAGED_ALLOW_RULES_KEY]
 
         atomic_write_json(CONFIG_FILE, preserved)
 
@@ -816,6 +882,7 @@ class PermissionsToggle:
         self._cleaned_up = True
 
         unregister_hook()
+        sync_managed_permission_rules(self.config, False)
 
         preserved = {}
         if "saved_custom" in self.config:
@@ -825,6 +892,8 @@ class PermissionsToggle:
         if "last_active_template" in self.config:
             preserved["last_active_template"] = self.config["last_active_template"]
         preserved["write_edit_on"] = self.write_edit_on
+        if MANAGED_ALLOW_RULES_KEY in self.config:
+            preserved[MANAGED_ALLOW_RULES_KEY] = self.config[MANAGED_ALLOW_RULES_KEY]
 
         if preserved:
             atomic_write_json(CONFIG_FILE, preserved)
