@@ -1,6 +1,6 @@
 # Claude Permissions Toggle
 
-A dark-themed GUI for controlling Claude Code tool permissions with granular allow/block settings.
+A dark-themed GUI for controlling Claude Code tool permissions with granular allow/block settings, fast write/edit bypasses, and optional visible auto-accept prompts.
 
 ![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.x-blue?style=flat&logo=python&logoColor=white)
@@ -10,9 +10,11 @@ A dark-themed GUI for controlling Claude Code tool permissions with granular all
 - **Zero overhead when closed** - Hook auto-unregisters on close, Claude uses native behavior
 - **Auto-registers on open** - No installer needed, just launch the app
 - **Fast W/E mode** - Write/Edit/NotebookEdit can run without the permission dialog flash
+- **Approval display modes** - Choose `Silent` or `Show accepts` for allowed prompt-worthy tools
 - **Hot toggles** - Category changes take effect immediately while the hook is already loaded
 - **Two-layer system** - ALLOW categories + BLOCK specific patterns
 - **13 destructive patterns** blocked by default (rm -rf, git reset --hard, etc.)
+- **PowerShell-aware shell handling** - Windows `PowerShell` is classified and filtered alongside Bash
 - **Save custom templates** - Settings persist across app restarts
 - **Minimal mode** - Collapse to single ON/OFF toggle
 - **Dark theme** with scrollable UI
@@ -77,13 +79,15 @@ Click the `_` button to collapse into a compact split-toggle view:
 | Custom | ✎ | Title Bar | Result |
 |--------|---|-----------|--------|
 | OFF | (disabled) | `Claude: OFF` | Hook unregistered - Claude uses native behavior |
-| ON | OFF | `Claude: R/O\|ALL*` | Read-only - can read, search, bash, but NOT write/edit |
-| ON | ON | `Claude: W/E\|ALL*` | Full custom - everything including write/edit |
+| ON | OFF | `Claude: R/O\|ALL*\|SILENT` | Read-only, promptless auto-approvals where allowed |
+| ON | ON | `Claude: W/E\|ALL*\|SILENT` | Full custom with the cleanest no-prompt flow |
+| ON | ON | `Claude: W/E\|ALL*\|SHOW` | Full custom while the main window is set to visible approvals |
 
 **Use case:** Stay in read-only mode while exploring, then flip ✎ on when ready to make changes.
 
 - Remembers both states across restarts
 - ✎ controls: Write, Edit, NotebookEdit
+- Approval display still lives in the main window, not the minimal strip
 
 ## Installation
 
@@ -138,6 +142,33 @@ Recent Claude Code builds can surface native file-permission UI through `Permiss
 
 Those allow rules are only managed while the toggle is active. Turning W/E OFF or closing the app removes the rules it added, so Claude goes back to its normal prompts.
 
+### Approval Display Modes
+
+The toggle supports two approval-display behaviors for tools that Claude normally surfaces in a permission prompt:
+
+- **Silent** - `PreToolUse` returns `allow`, so approved tools run without showing the permission UI
+- **Show accepts** - `PreToolUse` returns `ask`, then `PermissionRequest` immediately returns `allow`, so Claude shows the approval surface and auto-accepts it
+
+This gives you two distinct working styles:
+
+- **Silent** for a clean, collapsed workflow with no approval flash
+- **Show accepts** when you want to see Claude's permission UI and inline diff preview before the action proceeds
+
+`Show accepts` is intended for interactive Claude sessions. Non-interactive `claude -p` runs do not render approval dialogs the same way.
+
+### Recent Fixes
+
+Recent updates in this repo include:
+
+- Added explicit Windows `PowerShell` tool support and classified it alongside Bash shell tools
+- Added approval display modes: `Silent` and `Show accepts`
+- Added a true visible-approval path using `PreToolUse -> ask` plus `PermissionRequest -> allow`
+- Expanded tool mapping for newer Claude tools such as MCP resource readers and newer task/team/worktree actions
+- Hardened delete detection for PowerShell `Remove-Item` / `ri`
+- Hardened root/home delete blocking for quoted and slash-style PowerShell drive roots
+- Fixed state persistence so `approval_mode` survives normal app close and restart
+- Removed the approval toggle from minimal mode while keeping approval controls in the main window
+
 ### Two-Layer Permission System
 
 1. **ALLOW** = Categories of tools to auto-approve
@@ -154,16 +185,16 @@ Each checkbox controls one or more Claude Code tools:
 | Read files | `Read` |
 | Write files | `Write` |
 | Edit files | `Edit` |
-| Search | `Glob`, `Grep`, `LSP`, `MCPSearch`, `ToolSearch` |
+| Search | `Glob`, `Grep`, `LSP`, `MCPSearch`, `ToolSearch`, `ListMcpResourcesTool` |
 | Web access | `WebFetch`, `WebSearch` |
 | Notebook edit | `NotebookEdit` |
-| Task/Todo tools | `Agent`, `Task`, `TodoWrite` (legacy), `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput` |
-| Bash (safe) | Safe commands: npm, node, python, pip, ls, cd, echo, curl, etc. |
-| Bash (delete) | `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred` |
-| Bash (all) | `Bash`, `BashOutput`, `KillShell` |
-| Git | Any command containing `git` |
+| Task/Todo tools | `Agent`, `Task`, `TodoWrite` (legacy), `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput`, `EnterPlanMode`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, `CronDelete`, `CronList`, `SendMessage`, `TeamCreate`, `TeamDelete`, `TaskStop` |
+| Bash (safe) | Safe Bash and PowerShell commands: npm, node, python, pip, ls, cd, echo, `Get-ChildItem`, `Get-Content`, `Select-String`, etc. |
+| Bash (delete) | `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`, `Remove-Item`, `ri` |
+| Bash (all) | `Bash`, `BashOutput`, `KillShell`, `Monitor`, `PowerShell` |
+| Git | Any Bash or PowerShell command containing `git` |
 
-**Note:** Claude Code tool names evolve over time. This hook supports legacy names (`TodoWrite`, `Task`) and current names (`Agent`, `AskUserQuestion`, `ExitPlanMode`, `Skill`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskOutput`).
+**Note:** Claude Code tool names evolve over time. This hook supports both legacy names (`TodoWrite`, `Task`) and current Windows-aware tools such as `PowerShell`, `Monitor`, MCP resource readers, and newer task/team/worktree actions.
 
 ### Hook Response Format
 
@@ -198,6 +229,11 @@ The toggle handles two Claude Code hook events:
 
 If the hook emits no `PermissionRequest` decision, Claude shows its normal permission dialog.
 
+When approval display is set to `Show accepts`, the hook intentionally uses both stages together:
+
+- `PreToolUse` returns `ask` so the prompt can appear
+- `PermissionRequest` returns `allow` so the prompt is auto-accepted
+
 ### Git Commands Override
 
 When `git=OFF`, git commands will **always** ask for permission, even if `bash_all=ON`. This ensures granular control over git operations.
@@ -208,6 +244,7 @@ When `bash_delete=OFF`, file deletion commands will **always** ask for permissio
 
 **Detected deletion commands:**
 - `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`
+- `Remove-Item`, `ri`
 
 **Why this matters:** Even if you trust Claude with general bash commands, accidental deletions can be catastrophic. With `bash_delete=OFF`, you get a prompt showing exactly what files will be deleted before approving.
 
@@ -249,6 +286,24 @@ ls -la; rm old.txt            # Delete after semicolon
 ```
 
 This prevents bypassing permissions by prefixing commands with safe operations.
+
+### Testing
+
+Run the non-destructive regression suite:
+
+```bash
+python test_patterns.py
+python test_state_preservation.py
+```
+
+Coverage includes:
+
+- destructive block patterns without executing them
+- delete-family detection, including env-wrapped shell deletes
+- current tool-name mapping
+- approval-display routing
+- permission precedence such as `git` and delete commands still asking even when `bash_all` is enabled
+- preserved config state written on close
 
 ### Templates
 

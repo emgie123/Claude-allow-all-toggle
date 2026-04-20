@@ -8,6 +8,7 @@ A GUI toggle for controlling Claude Code tool permissions with:
 - **ALLOW categories** - Which tool types to auto-approve
 - **BLOCK patterns** - Specific destructive commands to always deny
 - **Fast W/E mode** - Write/Edit/NotebookEdit can run without the prompt flash
+- **Approval display modes** - `silent` or `show_accepts` for prompt-worthy allowed tools
 - **Hot toggles** - Category changes take effect immediately while hooks are already loaded
 - **Custom templates** - Save and recall custom configurations
 - **Minimal mode** - Collapse to single ON/OFF toggle
@@ -42,7 +43,8 @@ claude-permissions-hook.py (hook)
 | `AutoYesToggle.pyw` | Tkinter GUI with dark theme |
 | `claude-permissions-hook.py` | Dual hook handler for `PreToolUse` and `PermissionRequest` |
 | `install.py` | Installer / uninstaller |
-| `test_patterns.py` | 84 test cases for pattern & delete detection |
+| `test_patterns.py` | Pattern, delete, tool-mapping, and approval-mode tests |
+| `test_state_preservation.py` | Regression test for preserved UI state written on close |
 
 ## Installation
 
@@ -90,8 +92,9 @@ Collapse the full UI into a compact split-toggle view:
 | Custom | ✎ | Title Bar | Result |
 |--------|---|-----------|--------|
 | OFF | (disabled) | `Claude: OFF` | Full minimal - ask for everything |
-| ON | OFF | `Claude: R/O\|ALL*` | Read-only - can read, search, bash, but NOT write/edit |
-| ON | ON | `Claude: W/E\|ALL*` | Full custom - everything including write/edit |
+| ON | OFF | `Claude: R/O\|ALL*\|SILENT` | Read-only - can read, search, bash, but NOT write/edit |
+| ON | ON | `Claude: W/E\|ALL*\|SILENT` | Full custom - everything including write/edit |
+| ON | ON | `Claude: W/E\|ALL*\|SHOW` | Full custom while the main window is set to visible approvals |
 
 **Use case:** Stay in read-only mode while exploring code, then flip W/E on when ready to make changes.
 
@@ -107,6 +110,7 @@ Collapse the full UI into a compact split-toggle view:
   "minimal_mode": false,
   "last_active_template": "all_safe",
   "write_edit_on": true,
+  "approval_mode": "silent",
   "managed_allow_rules": ["Edit", "NotebookEdit", "Write"],
   "allow": {
     "read": true,
@@ -132,6 +136,8 @@ Collapse the full UI into a compact split-toggle view:
 ```
 
 `managed_allow_rules` tracks which `permissions.allow` entries were added by the toggle so they can be removed cleanly when W/E is turned off or the app exits.
+
+`approval_mode` controls whether allowed prompt-worthy tools should stay hidden (`silent`) or show Claude's approval UI before being auto-accepted (`show_accepts`).
 
 ## Hook Input Format
 
@@ -189,6 +195,24 @@ If no `PermissionRequest` decision is emitted, Claude shows its normal prompt.
 
 When W/E is ON, the GUI temporarily adds `Write`, `Edit`, and `NotebookEdit` to `permissions.allow` in `~/.claude/settings.json`. That avoids the prompt flash on recent Claude Code builds. Those managed rules must be removed again when W/E is OFF or the app closes.
 
+## Approval Display Modes
+
+The hook supports two approval behaviors:
+
+- `silent`: `PreToolUse` returns `allow`, so approved tools run without showing the permission UI
+- `show_accepts`: `PreToolUse` returns `ask`, then `PermissionRequest` returns `allow`, so Claude shows the approval surface and auto-accepts it
+
+## Recent Fixes
+
+Recent code changes in this repo include:
+
+- Windows `PowerShell` tool support in the hook's shell classification
+- newer Claude tool-name coverage for MCP resource readers and task/team/worktree actions
+- `approval_mode` persistence across normal app close/restart
+- stronger detection for env-wrapped delete commands
+- stronger PowerShell root/home delete blocking for quoted and slash-style paths
+- removal of the approval toggle from minimal mode
+
 ## Git Override Behavior
 
 When `git=OFF`, git commands always return `"ask"` even if `bash_all=ON`.
@@ -199,7 +223,7 @@ This ensures granular control - you can allow all bash but still require approva
 When `bash_delete=OFF`, file deletion commands always return `"ask"` even if `bash_all=ON`.
 This lets you verify exactly what will be deleted before approving.
 
-**Detected commands:** `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`
+**Detected commands:** `rm`, `del`, `rmdir`, `rd`, `erase`, `unlink`, `shred`, `Remove-Item`, `ri`
 
 **Chained commands:** If ANY part of a chained command is a delete, it triggers the check:
 ```bash
@@ -212,6 +236,7 @@ ls -la; rm old.txt        # Detected as delete
 Run without executing any commands:
 ```bash
 python test_patterns.py
+python test_state_preservation.py
 ```
 
 ## Uninstall

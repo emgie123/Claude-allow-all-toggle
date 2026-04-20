@@ -25,6 +25,9 @@ MANAGED_ALLOW_RULES = {
     "edit": "Edit",
     "notebook": "NotebookEdit",
 }
+APPROVAL_MODE_KEY = "approval_mode"
+APPROVAL_MODE_SILENT = "silent"
+APPROVAL_MODE_SHOW_ACCEPTS = "show_accepts"
 
 
 def get_python_path():
@@ -60,6 +63,23 @@ def atomic_write_json(path, payload):
         os.fsync(f.fileno())
 
     os.replace(temp_path, path)
+
+
+def build_preserved_config(config, minimal_mode, last_active_template, write_edit_on):
+    """Persist UI preferences while dropping active allow/block state."""
+    preserved = {
+        "minimal_mode": minimal_mode,
+        "last_active_template": last_active_template,
+        "write_edit_on": write_edit_on,
+        APPROVAL_MODE_KEY: config.get(APPROVAL_MODE_KEY, APPROVAL_MODE_SILENT),
+    }
+
+    if "saved_custom" in config:
+        preserved["saved_custom"] = config["saved_custom"]
+    if MANAGED_ALLOW_RULES_KEY in config:
+        preserved[MANAGED_ALLOW_RULES_KEY] = config[MANAGED_ALLOW_RULES_KEY]
+
+    return preserved
 
 
 def sync_managed_permission_rules(config, toggle_enabled):
@@ -193,14 +213,14 @@ ALLOW_CATEGORIES = [
     ("read", "Read files"),
     ("write", "Write files"),
     ("edit", "Edit files"),
-    ("search", "Search (Glob/Grep/ToolSearch)"),
+    ("search", "Search (Glob/Grep/ToolSearch/LSP/MCP)"),
     ("web", "Web access"),
     ("notebook", "Notebook edit"),
-    ("task", "Task/Todo tools"),
-    ("bash_safe", "Bash (safe: npm, node, pip, ls)"),
-    ("bash_delete", "Bash (file deletion: rm, del, rmdir)"),
-    ("bash_all", "Bash (all commands)"),
-    ("git", "Git commands"),
+    ("task", "Task/plan/team tools"),
+    ("bash_safe", "Shell (safe Bash/PowerShell commands)"),
+    ("bash_delete", "Shell (file deletion: rm, del, rmdir, Remove-Item)"),
+    ("bash_all", "Shell (all Bash/PowerShell commands)"),
+    ("git", "Git commands (Bash/PowerShell)"),
 ]
 
 # Block patterns
@@ -306,6 +326,7 @@ class PermissionsToggle:
 
         # Track Write/Edit state separately (only meaningful when Custom is ON)
         self.write_edit_on = self.config.get("write_edit_on", True)
+        self.config[APPROVAL_MODE_KEY] = self.get_approval_mode()
 
         # Auto-apply last active template on startup (config is cleared on close)
         self.apply_template_silent(self.last_active_template)
@@ -326,6 +347,7 @@ class PermissionsToggle:
         default = {
             "allow": {cat[0]: False for cat in ALLOW_CATEGORIES},
             "block": {pat[0]: True for pat in BLOCK_PATTERNS},
+            APPROVAL_MODE_KEY: APPROVAL_MODE_SILENT,
         }
 
         if os.path.exists(CONFIG_FILE):
@@ -349,23 +371,42 @@ class PermissionsToggle:
         self.config["minimal_mode"] = self.minimal_mode
         self.config["last_active_template"] = self.last_active_template
         self.config["write_edit_on"] = self.write_edit_on
+        self.config[APPROVAL_MODE_KEY] = self.get_approval_mode()
 
         sync_managed_permission_rules(self.config, self.is_on)
         atomic_write_json(CONFIG_FILE, self.config)
 
+    def get_approval_mode(self):
+        mode = self.config.get(APPROVAL_MODE_KEY, APPROVAL_MODE_SILENT)
+        if mode in (APPROVAL_MODE_SILENT, APPROVAL_MODE_SHOW_ACCEPTS):
+            return mode
+        return APPROVAL_MODE_SILENT
+
+    def toggle_approval_mode(self):
+        next_mode = APPROVAL_MODE_SHOW_ACCEPTS
+        if self.get_approval_mode() == APPROVAL_MODE_SHOW_ACCEPTS:
+            next_mode = APPROVAL_MODE_SILENT
+        self.set_approval_mode(next_mode)
+
+    def set_approval_mode(self, mode):
+        self.config[APPROVAL_MODE_KEY] = mode
+        if hasattr(self, "approval_mode_var"):
+            self.approval_mode_var.set(mode)
+        self.save_config()
+        if self.minimal_mode:
+            self.update_minimal_display()
+        else:
+            self.update_display()
+
     def clear_active_config(self):
         """Clear active permissions but preserve preferences (like X close does)."""
         sync_managed_permission_rules(self.config, False)
-
-        preserved = {}
-        if "saved_custom" in self.config:
-            preserved["saved_custom"] = self.config["saved_custom"]
-        preserved["minimal_mode"] = self.minimal_mode
-        preserved["last_active_template"] = self.last_active_template
-        preserved["write_edit_on"] = self.write_edit_on
-        if MANAGED_ALLOW_RULES_KEY in self.config:
-            preserved[MANAGED_ALLOW_RULES_KEY] = self.config[MANAGED_ALLOW_RULES_KEY]
-
+        preserved = build_preserved_config(
+            self.config,
+            self.minimal_mode,
+            self.last_active_template,
+            self.write_edit_on,
+        )
         atomic_write_json(CONFIG_FILE, preserved)
 
     def detect_template(self):
@@ -428,6 +469,7 @@ class PermissionsToggle:
     def update_minimal_display(self):
         """Update the minimal UI display with split buttons."""
         c = self.c
+        approval_mode = self.get_approval_mode()
 
         if self.is_on:
             # Show current mode name on Custom button
@@ -450,7 +492,8 @@ class PermissionsToggle:
 
             # Title shows both states
             we_status = "W/E" if self.write_edit_on else "R/O"
-            self.root.title(f"Claude: {we_status}|{label}")
+            approval_status = "SHOW" if approval_mode == APPROVAL_MODE_SHOW_ACCEPTS else "SILENT"
+            self.root.title(f"Claude: {we_status}|{label}|{approval_status}")
         else:
             # Custom is OFF - everything disabled
             self.power_btn.config(text="OFF", bg=c["gray"], fg=c["text"])
@@ -638,6 +681,56 @@ class PermissionsToggle:
                                   command=self.save_custom)
         self.save_btn.pack(side="right")
 
+        mode_label = tk.Label(main, text="APPROVAL DISPLAY:", font=("Segoe UI", 10, "bold"),
+                              bg=c["bg"], fg=c["text"], anchor="w")
+        mode_label.pack(fill="x", padx=15, pady=(5, 5))
+
+        mode_card = tk.Frame(main, bg=c["card"], bd=1,
+                             highlightbackground=c["border"], highlightthickness=1)
+        mode_card.pack(fill="x", padx=15, pady=(0, 10))
+
+        self.approval_mode_var = tk.StringVar(value=self.get_approval_mode())
+
+        silent_btn = tk.Radiobutton(
+            mode_card,
+            text="Silent mode: skip the permission dialog whenever Claude can be auto-approved",
+            variable=self.approval_mode_var,
+            value=APPROVAL_MODE_SILENT,
+            font=("Segoe UI", 9),
+            bg=c["card"],
+            fg=c["text"],
+            selectcolor=c["bg"],
+            activebackground=c["card"],
+            activeforeground=c["text"],
+            highlightthickness=0,
+            bd=0,
+            anchor="w",
+            padx=8,
+            pady=2,
+            command=lambda: self.set_approval_mode(APPROVAL_MODE_SILENT),
+        )
+        silent_btn.pack(fill="x")
+
+        show_btn = tk.Radiobutton(
+            mode_card,
+            text="Show accepts: surface the permission dialog, then auto-accept allowed tools",
+            variable=self.approval_mode_var,
+            value=APPROVAL_MODE_SHOW_ACCEPTS,
+            font=("Segoe UI", 9),
+            bg=c["card"],
+            fg=c["text"],
+            selectcolor=c["bg"],
+            activebackground=c["card"],
+            activeforeground=c["text"],
+            highlightthickness=0,
+            bd=0,
+            anchor="w",
+            padx=8,
+            pady=2,
+            command=lambda: self.set_approval_mode(APPROVAL_MODE_SHOW_ACCEPTS),
+        )
+        show_btn.pack(fill="x")
+
         # === ALLOW SECTION ===
         self.build_section(main, "ALLOW (auto-approve):", ALLOW_CATEGORIES, "allow")
 
@@ -795,6 +888,10 @@ class PermissionsToggle:
     def update_display(self):
         c = self.c
         template = self.current_template
+        approval_mode = self.get_approval_mode()
+
+        if hasattr(self, "approval_mode_var"):
+            self.approval_mode_var.set(approval_mode)
 
         # Button colors
         colors = {"off": c["gray"], "all_safe": c["green"], "all": c["red"], "custom": c["purple"]}
@@ -822,15 +919,22 @@ class PermissionsToggle:
             self.status_label.config(fg=c["purple"])
 
         self.status_label.config(text=status)
-        self.root.title(f"Claude: {template.upper()}")
+        approval_status = "Show accepts" if approval_mode == APPROVAL_MODE_SHOW_ACCEPTS else "Silent"
+        self.root.title(f"Claude: {template.upper()} | {approval_status}")
 
         # Info
         if template == "all":
-            self.info_label.config(text="Warning: Destructive commands will run!", fg=c["red"])
+            self.info_label.config(
+                text=f"Warning: Destructive commands will run! Approval display: {approval_status}.",
+                fg=c["red"],
+            )
         elif blocked > 0:
-            self.info_label.config(text=f"Protected: {blocked} patterns blocked", fg=c["green"])
+            self.info_label.config(
+                text=f"Protected: {blocked} patterns blocked. Approval display: {approval_status}.",
+                fg=c["green"],
+            )
         else:
-            self.info_label.config(text="")
+            self.info_label.config(text=f"Approval display: {approval_status}.", fg=c["muted"])
 
     def acquire_runtime_lock(self):
         """Hold an exclusive lock while the toggle process is alive."""
@@ -883,17 +987,12 @@ class PermissionsToggle:
 
         unregister_hook()
         sync_managed_permission_rules(self.config, False)
-
-        preserved = {}
-        if "saved_custom" in self.config:
-            preserved["saved_custom"] = self.config["saved_custom"]
-        if "minimal_mode" in self.config:
-            preserved["minimal_mode"] = self.config["minimal_mode"]
-        if "last_active_template" in self.config:
-            preserved["last_active_template"] = self.config["last_active_template"]
-        preserved["write_edit_on"] = self.write_edit_on
-        if MANAGED_ALLOW_RULES_KEY in self.config:
-            preserved[MANAGED_ALLOW_RULES_KEY] = self.config[MANAGED_ALLOW_RULES_KEY]
+        preserved = build_preserved_config(
+            self.config,
+            self.minimal_mode,
+            self.last_active_template,
+            self.write_edit_on,
+        )
 
         if preserved:
             atomic_write_json(CONFIG_FILE, preserved)

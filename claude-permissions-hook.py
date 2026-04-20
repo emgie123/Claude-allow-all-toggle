@@ -32,11 +32,15 @@ MANAGED_ALLOW_RULES = {
     "edit": "Edit",
     "notebook": "NotebookEdit",
 }
+APPROVAL_MODE_KEY = "approval_mode"
+APPROVAL_MODE_SILENT = "silent"
+APPROVAL_MODE_SHOW_ACCEPTS = "show_accepts"
 PRESERVED_CONFIG_KEYS = [
     "saved_custom",
     "minimal_mode",
     "last_active_template",
     "write_edit_on",
+    APPROVAL_MODE_KEY,
     MANAGED_ALLOW_RULES_KEY,
 ]
 
@@ -44,11 +48,13 @@ PRESERVED_CONFIG_KEYS = [
 # Keep in sync with Claude Code's current tool names.
 TOOL_CATEGORIES = {
     "Read": "read",
+    "ReadMcpResourceTool": "read",
     "Write": "write",
     "Edit": "edit",
     "Glob": "search",
     "Grep": "search",
     "LSP": "search",
+    "ListMcpResourcesTool": "search",
     "MCPSearch": "search",
     "ToolSearch": "search",
     "WebFetch": "web",
@@ -59,7 +65,10 @@ TOOL_CATEGORIES = {
     "Task": "task",           # Legacy alias
     "TodoWrite": "task",      # Legacy (pre-2.0.59)
     "AskUserQuestion": "task",
+    "EnterPlanMode": "task",
+    "EnterWorktree": "task",
     "ExitPlanMode": "task",
+    "ExitWorktree": "task",
     "Skill": "task",
     "TaskCreate": "task",     # New (2.1.16+)
     "TaskUpdate": "task",     # New (2.0.59+)
@@ -67,10 +76,32 @@ TOOL_CATEGORIES = {
     "TaskGet": "task",        # New (2.1.16+)
     "TaskStop": "task",       # Stop background tasks
     "TaskOutput": "task",     # Read background task output
+    "CronCreate": "task",
+    "CronDelete": "task",
+    "CronList": "task",
+    "SendMessage": "task",
+    "TeamCreate": "task",
+    "TeamDelete": "task",
     # Bash tools
     "Bash": "bash",
     "BashOutput": "bash",
     "KillShell": "bash",
+    "Monitor": "bash",
+    "PowerShell": "bash",
+}
+
+PROMPT_REQUIRED_TOOLS = {
+    "Bash",
+    "Edit",
+    "ExitPlanMode",
+    "KillShell",
+    "Monitor",
+    "NotebookEdit",
+    "PowerShell",
+    "Skill",
+    "WebFetch",
+    "WebSearch",
+    "Write",
 }
 
 # Safe bash command prefixes
@@ -80,7 +111,12 @@ SAFE_BASH = [
     "ls ", "dir ", "pwd", "cd ", "cat ", "type ", "head ", "tail ",
     "echo ", "printf ", "mkdir ", "touch ",
     "curl ", "wget ", "which ", "where ", "whoami", "hostname",
-    "env", "printenv", "set ",
+    "printenv", "set ",
+    # PowerShell-safe commands
+    "get-childitem", "gci ", "get-content ", "gc ", "select-string ", "sls ",
+    "get-location", "set-location ", "write-host ", "write-output ",
+    "test-path ", "get-item ", "gi ", "new-item ", "ni ",
+    "get-command ", "gcm ", "get-process ", "gps ",
 ]
 
 # File deletion command prefixes (single and batch)
@@ -96,12 +132,51 @@ DELETE_COMMANDS = [
     "erase ",    # Windows alias for del
     "unlink ",   # Unix file delete
     "shred ",    # Secure delete
+    "remove-item ",
+    "remove-item	",
+    "ri ",
+    "ri	",
 ]
+
+# Block pattern helpers
+def is_powershell_force_delete(cmd):
+    lower = cmd.lower()
+    if not re.search(r"^\s*(remove-item|ri)\b", lower):
+        return False
+    has_recurse = bool(re.search(r"-(recurse|r)\b", lower))
+    has_force = bool(re.search(r"-(force|fo|f)\b", lower))
+    return has_recurse and has_force
+
+
+def targets_root_or_home(cmd):
+    return any(re.search(pattern, cmd, re.IGNORECASE) for pattern in [
+        r"(^|\s)['\"]?[/~]['\"]?(?=\s|$)",
+        r"(^|\s)['\"]?\$HOME\b['\"]?(?=\s|$)",
+        r"(^|\s)['\"]?%USERPROFILE%['\"]?(?=\s|$)",
+        r"(^|\s)['\"]?\$env:USERPROFILE\b['\"]?(?=\s|$)",
+        r"(^|\s)['\"]?[a-zA-Z]:(?:\\|/)['\"]?(?=\s|$)",
+    ])
+
+
+def strip_env_prefix(part):
+    """Normalize simple `env VAR=... cmd` wrappers before command checks."""
+    return re.sub(r"^\s*env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s]+)*\s+", "", part, flags=re.IGNORECASE)
+
 
 # Block pattern detection functions
 BLOCK_PATTERNS = {
-    "rm_rf": lambda cmd: bool(re.search(r"\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b", cmd, re.IGNORECASE)),
-    "rm_rf_root": lambda cmd: bool(re.search(r"\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%", cmd, re.IGNORECASE)),
+    "rm_rf": lambda cmd: bool(re.search(
+        r"\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b|"
+        r"\b(?:remove-item|ri)\b.*-(?:recurse|r)\b.*-(?:force|fo|f)\b|"
+        r"\b(?:remove-item|ri)\b.*-(?:force|fo|f)\b.*-(?:recurse|r)\b",
+        cmd,
+        re.IGNORECASE,
+    )),
+    "rm_rf_root": lambda cmd: bool(re.search(
+        r"\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%",
+        cmd,
+        re.IGNORECASE,
+    )) or (is_powershell_force_delete(cmd) and targets_root_or_home(cmd)),
     "git_reset_hard": lambda cmd: "git reset --hard" in cmd or "git reset --merge" in cmd,
     "git_checkout_discard": lambda cmd: bool(re.search(r"git\s+checkout\s+--\s+", cmd)),
     "git_clean": lambda cmd: bool(re.search(r"git\s+clean\s+-[^\s]*f", cmd)),
@@ -114,6 +189,24 @@ BLOCK_PATTERNS = {
     "mkfs": lambda cmd: cmd.strip().startswith("mkfs"),
     "chmod_777": lambda cmd: bool(re.search(r"chmod\s+.*-R\s+777\s+/", cmd)),
 }
+
+
+def get_approval_mode(config):
+    if not isinstance(config, dict):
+        return APPROVAL_MODE_SILENT
+    mode = config.get(APPROVAL_MODE_KEY, APPROVAL_MODE_SILENT)
+    if mode in (APPROVAL_MODE_SILENT, APPROVAL_MODE_SHOW_ACCEPTS):
+        return mode
+    return APPROVAL_MODE_SILENT
+
+
+def should_show_permission_prompt(tool_name, result, config):
+    """Route allowed tools through the native permission dialog when requested."""
+    return (
+        result == "allow" and
+        get_approval_mode(config) == APPROVAL_MODE_SHOW_ACCEPTS and
+        tool_name in PROMPT_REQUIRED_TOOLS
+    )
 
 
 def atomic_write_json(path, payload):
@@ -342,6 +435,7 @@ def is_delete_command(cmd):
         part = part.strip().lower()
         if not part:
             continue
+        part = strip_env_prefix(part)
         # Check if this part starts with a delete command
         if any(part.startswith(prefix.lower()) for prefix in DELETE_COMMANDS):
             return True
@@ -490,6 +584,9 @@ def main():
         return
 
     if result == "allow":
+        if should_show_permission_prompt(tool_name, result, config):
+            ask_permission(f"Showing approval prompt before auto-accepting {tool_name}")
+            return
         print(json.dumps({
             "continue": True,
             "suppressOutput": False,

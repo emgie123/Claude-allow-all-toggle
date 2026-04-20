@@ -12,14 +12,39 @@ import re
 
 TOOL_CATEGORIES = {
     "Read": "read", "Write": "write", "Edit": "edit",
-    "Glob": "search", "Grep": "search", "LSP": "search", "MCPSearch": "search",
+    "ReadMcpResourceTool": "read",
+    "Glob": "search", "Grep": "search", "LSP": "search", "MCPSearch": "search", "ListMcpResourcesTool": "search",
     "WebFetch": "web", "WebSearch": "web",
     "NotebookEdit": "notebook",
     "Agent": "task", "Task": "task", "TodoWrite": "task",
-    "AskUserQuestion": "task", "ExitPlanMode": "task", "Skill": "task",
+    "AskUserQuestion": "task", "EnterPlanMode": "task", "EnterWorktree": "task",
+    "ExitPlanMode": "task", "ExitWorktree": "task", "Skill": "task",
     "TaskCreate": "task", "TaskUpdate": "task", "TaskList": "task", "TaskGet": "task", "TaskOutput": "task",
-    "Bash": "bash", "BashOutput": "bash", "KillShell": "bash",
+    "TaskStop": "task", "CronCreate": "task", "CronDelete": "task", "CronList": "task",
+    "SendMessage": "task", "TeamCreate": "task", "TeamDelete": "task",
+    "Bash": "bash", "BashOutput": "bash", "KillShell": "bash", "Monitor": "bash", "PowerShell": "bash",
 }
+
+PROMPT_REQUIRED_TOOLS = {
+    "Bash", "Edit", "ExitPlanMode", "KillShell", "Monitor", "NotebookEdit",
+    "PowerShell", "Skill", "WebFetch", "WebSearch", "Write",
+}
+
+APPROVAL_MODE_SILENT = "silent"
+APPROVAL_MODE_SHOW_ACCEPTS = "show_accepts"
+
+SAFE_BASH = [
+    "npm ", "npm.cmd ", "npx ", "pnpm ", "yarn ",
+    "node ", "python ", "python3 ", "pip ", "pip3 ",
+    "ls ", "dir ", "pwd", "cd ", "cat ", "type ", "head ", "tail ",
+    "echo ", "printf ", "mkdir ", "touch ",
+    "curl ", "wget ", "which ", "where ", "whoami", "hostname",
+    "printenv", "set ",
+    "get-childitem", "gci ", "get-content ", "gc ", "select-string ", "sls ",
+    "get-location", "set-location ", "write-host ", "write-output ",
+    "test-path ", "get-item ", "gi ", "new-item ", "ni ",
+    "get-command ", "gcm ", "get-process ", "gps ",
+]
 
 # File deletion command prefixes (copied from hook)
 DELETE_COMMANDS = [
@@ -33,6 +58,10 @@ DELETE_COMMANDS = [
     "erase ",    # Windows alias for del
     "unlink ",   # Unix file delete
     "shred ",    # Secure delete
+    "remove-item ",
+    "remove-item\t",
+    "ri ",
+    "ri\t",
 ]
 
 
@@ -43,15 +72,118 @@ def is_delete_command(cmd):
         part = part.strip().lower()
         if not part:
             continue
+        part = strip_env_prefix(part)
         if any(part.startswith(prefix.lower()) for prefix in DELETE_COMMANDS):
             return True
         if part == "rm" or part == "del" or part == "rd" or part == "rmdir":
             return True
     return False
 
+
+def strip_env_prefix(part):
+    return re.sub(r"^\s*env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s]+)*\s+", "", part, flags=re.IGNORECASE)
+
+
+def is_git_command(cmd):
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip()
+        if part.startswith("git ") or part.startswith("git.exe "):
+            return True
+        if " git " in part or part.endswith(" git"):
+            return True
+    return False
+
+
+def is_safe_bash(cmd):
+    parts = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+        is_part_safe = any(part.startswith(prefix.lower()) for prefix in SAFE_BASH)
+        if not is_part_safe:
+            return False
+    return True
+
+def is_powershell_force_delete(cmd):
+    lower = cmd.lower()
+    if not re.search(r'^\s*(remove-item|ri)\b', lower):
+        return False
+    has_recurse = bool(re.search(r'-(recurse|r)\b', lower))
+    has_force = bool(re.search(r'-(force|fo|f)\b', lower))
+    return has_recurse and has_force
+
+
+def targets_root_or_home(cmd):
+    return any(re.search(pattern, cmd, re.IGNORECASE) for pattern in [
+        r'(^|\s)[\'"]?[/~][\'"]?(?=\s|$)',
+        r'(^|\s)[\'"]?\$HOME\b[\'"]?(?=\s|$)',
+        r'(^|\s)[\'"]?%USERPROFILE%[\'"]?(?=\s|$)',
+        r'(^|\s)[\'"]?\$env:USERPROFILE\b[\'"]?(?=\s|$)',
+        r'(^|\s)[\'"]?[a-zA-Z]:(?:\\|/)[\'"]?(?=\s|$)',
+    ])
+
+
+def check_blocks(cmd, config):
+    blocks = config.get("block", {})
+    for pattern_id, detector in BLOCK_PATTERNS.items():
+        if blocks.get(pattern_id, True) and detector(cmd):
+            return pattern_id
+    return None
+
+
+def check_permission(tool_name, tool_input, config):
+    allow = config.get("allow", {})
+    category = TOOL_CATEGORIES.get(tool_name)
+
+    if category is None:
+        return None
+
+    if category != "bash":
+        if allow.get(category, False):
+            return "allow"
+        return None
+
+    cmd = tool_input.get("command", "")
+
+    blocked = check_blocks(cmd, config)
+    if blocked:
+        return ("block", blocked)
+
+    if is_git_command(cmd):
+        if allow.get("git", False):
+            return "allow"
+        return None
+
+    if is_safe_bash(cmd):
+        if allow.get("bash_safe", False):
+            return "allow"
+
+    if is_delete_command(cmd):
+        if allow.get("bash_delete", False):
+            return "allow"
+        return None
+
+    if allow.get("bash_all", False):
+        return "allow"
+
+    return None
+
+
 BLOCK_PATTERNS = {
-    "rm_rf": lambda cmd: bool(re.search(r'\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b', cmd, re.IGNORECASE)),
-    "rm_rf_root": lambda cmd: bool(re.search(r'\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%', cmd, re.IGNORECASE)),
+    "rm_rf": lambda cmd: bool(re.search(
+        r'\brm\s+.*-[^\s]*r[^\s]*f|rm\s+.*-[^\s]*f[^\s]*r|\brm\s+-rf\b|'
+        r'\b(?:remove-item|ri)\b.*-(?:recurse|r)\b.*-(?:force|fo|f)\b|'
+        r'\b(?:remove-item|ri)\b.*-(?:force|fo|f)\b.*-(?:recurse|r)\b',
+        cmd,
+        re.IGNORECASE,
+    )),
+    "rm_rf_root": lambda cmd: bool(re.search(
+        r'\brm\s+.*-rf\s+[/~]|\brm\s+.*-rf\s+\$HOME|\brm\s+.*-rf\s+%USERPROFILE%',
+        cmd,
+        re.IGNORECASE,
+    )) or (is_powershell_force_delete(cmd) and targets_root_or_home(cmd)),
     "git_reset_hard": lambda cmd: "git reset --hard" in cmd or "git reset --merge" in cmd,
     "git_checkout_discard": lambda cmd: bool(re.search(r'git\s+checkout\s+--\s+', cmd)),
     "git_clean": lambda cmd: bool(re.search(r'git\s+clean\s+-[^\s]*f', cmd)),
@@ -65,6 +197,51 @@ BLOCK_PATTERNS = {
     "chmod_777": lambda cmd: bool(re.search(r'chmod\s+.*-R\s+777\s+/', cmd)),
 }
 
+TOOL_MAPPING_TESTS = [
+    ("PowerShell", "bash"),
+    ("Monitor", "bash"),
+    ("EnterPlanMode", "task"),
+    ("EnterWorktree", "task"),
+    ("ExitWorktree", "task"),
+    ("ReadMcpResourceTool", "read"),
+    ("ListMcpResourcesTool", "search"),
+    ("TaskStop", "task"),
+    ("SendMessage", "task"),
+    ("TeamCreate", "task"),
+]
+
+APPROVAL_MODE_TESTS = [
+    ("Write", "allow", APPROVAL_MODE_SILENT, False),
+    ("Write", "allow", APPROVAL_MODE_SHOW_ACCEPTS, True),
+    ("PowerShell", "allow", APPROVAL_MODE_SHOW_ACCEPTS, True),
+    ("Read", "allow", APPROVAL_MODE_SHOW_ACCEPTS, False),
+    ("Bash", None, APPROVAL_MODE_SHOW_ACCEPTS, False),
+]
+
+PERMISSION_PRECEDENCE_TESTS = [
+    (
+        "git_off_still_asks_even_with_bash_all",
+        "Bash",
+        {"command": "git status"},
+        {"allow": {"git": False, "bash_all": True, "bash_safe": False, "bash_delete": False}, "block": {}},
+        None,
+    ),
+    (
+        "delete_off_still_asks_even_with_bash_all",
+        "Bash",
+        {"command": "rm temp.txt"},
+        {"allow": {"git": False, "bash_all": True, "bash_safe": False, "bash_delete": False}, "block": {}},
+        None,
+    ),
+    (
+        "env_wrapped_delete_still_asks",
+        "Bash",
+        {"command": "env FOO=bar rm temp.txt"},
+        {"allow": {"git": False, "bash_all": True, "bash_safe": False, "bash_delete": False}, "block": {}},
+        None,
+    ),
+]
+
 # Test cases: (pattern_id, command, should_block)
 DESTRUCTIVE_TESTS = [
     # rm -rf tests
@@ -72,6 +249,8 @@ DESTRUCTIVE_TESTS = [
     ("rm_rf", "rm -rf /tmp/test", True),
     ("rm_rf", "rm -Rf node_modules", True),
     ("rm_rf", "rm -fr dist", True),
+    ("rm_rf", "Remove-Item build -Recurse -Force", True),
+    ("rm_rf", "ri build -Force -Recurse", True),
     ("rm_rf", "rm -r ./old", False),  # No -f, should NOT match rm_rf
     ("rm_rf", "rm file.txt", False),  # Simple rm, should NOT block
 
@@ -80,6 +259,11 @@ DESTRUCTIVE_TESTS = [
     ("rm_rf_root", "rm -rf ~", True),
     ("rm_rf_root", "rm -rf $HOME", True),
     ("rm_rf_root", "rm -rf %USERPROFILE%", True),
+    ("rm_rf_root", "Remove-Item C:\\ -Recurse -Force", True),
+    ("rm_rf_root", "Remove-Item 'C:\\' -Recurse -Force", True),
+    ("rm_rf_root", 'Remove-Item "C:\\" -Recurse -Force', True),
+    ("rm_rf_root", "Remove-Item C:/ -Recurse -Force", True),
+    ("rm_rf_root", "Remove-Item $env:USERPROFILE -Force -Recurse", True),
     ("rm_rf_root", "rm -rf ./local", False),  # Not root, should NOT match
 
     # git reset --hard
@@ -179,12 +363,17 @@ DELETE_TESTS = [
     ("erase temp.txt", True),
     ("unlink symlink", True),
     ("shred secret.txt", True),
+    ("Remove-Item temp.txt", True),
+    ("Remove-Item build -Recurse -Force", True),
+    ("ri build -Force -Recurse", True),
 
     # Chained commands with delete - SHOULD be detected
     ("npm run build && rm -r dist", True),
     ("ls -la; rm old.txt", True),
     ("git pull && rm -rf node_modules && npm install", True),
     ("echo 'done' | rm temp.log", True),  # Pipe chain
+    ("env rm temp.txt", True),
+    ("env FOO=bar rm temp.txt", True),
 
     # Commands that are NOT delete - should NOT be detected
     ("npm install", False),
@@ -229,6 +418,14 @@ def test_delete_detection(command, should_detect):
         return True, None
     else:
         return False, f"Expected {'DELETE' if should_detect else 'NOT DELETE'}, got {'DELETE' if is_delete else 'NOT DELETE'}"
+
+
+def should_show_permission_prompt(tool_name, result, approval_mode):
+    return (
+        result == "allow" and
+        approval_mode == APPROVAL_MODE_SHOW_ACCEPTS and
+        tool_name in PROMPT_REQUIRED_TOOLS
+    )
 
 
 def run_tests():
@@ -283,6 +480,57 @@ def run_tests():
             failed += 1
             print(f"  [{status}] {expected}: {command[:50]}")
             print(f"         ERROR: {error}")
+
+    print("\n" + "-" * 60)
+    print("TOOL MAPPING TESTS")
+    print("-" * 60)
+
+    for tool_name, expected_category in TOOL_MAPPING_TESTS:
+        actual_category = TOOL_CATEGORIES.get(tool_name)
+        success = actual_category == expected_category
+        status = "PASS" if success else "FAIL"
+
+        if success:
+            passed += 1
+            print(f"  [{status}] {tool_name} -> {expected_category}")
+        else:
+            failed += 1
+            print(f"  [{status}] {tool_name} -> expected {expected_category}, got {actual_category}")
+
+    print("\n" + "-" * 60)
+    print("APPROVAL DISPLAY TESTS")
+    print("-" * 60)
+
+    for tool_name, result, approval_mode, expected_prompt in APPROVAL_MODE_TESTS:
+        actual_prompt = should_show_permission_prompt(tool_name, result, approval_mode)
+        success = actual_prompt == expected_prompt
+        status = "PASS" if success else "FAIL"
+        expected = "SHOW" if expected_prompt else "SILENT"
+
+        if success:
+            passed += 1
+            print(f"  [{status}] {tool_name} / {approval_mode} -> {expected}")
+        else:
+            failed += 1
+            actual = "SHOW" if actual_prompt else "SILENT"
+            print(f"  [{status}] {tool_name} / {approval_mode} -> expected {expected}, got {actual}")
+
+    print("\n" + "-" * 60)
+    print("PERMISSION PRECEDENCE TESTS")
+    print("-" * 60)
+
+    for name, tool_name, tool_input, config, expected in PERMISSION_PRECEDENCE_TESTS:
+        result = check_permission(tool_name, tool_input, config)
+        success = result == expected
+        status = "PASS" if success else "FAIL"
+
+        if success:
+            passed += 1
+            print(f"  [{status}] {name}")
+        else:
+            failed += 1
+            print(f"  [{status}] {name}")
+            print(f"         ERROR: expected {expected!r}, got {result!r}")
 
     # Summary
     print("\n" + "=" * 60)
